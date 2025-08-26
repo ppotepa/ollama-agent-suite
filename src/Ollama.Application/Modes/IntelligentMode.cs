@@ -63,6 +63,7 @@ public sealed class IntelligentMode : IModeStrategy
             ["plan"] = plan,
             ["executionTree"] = executionTree,
             ["result"] = result,
+            ["response"] = result, // Add response key for CLI compatibility
             ["strategy"] = Type.ToString(),
             ["sessionId"] = sessionId
         };

@@ -1,4 +1,5 @@
 using Ollama.Domain.Agents;
+using Ollama.Domain.Services;
 using Ollama.Domain.Tools;
 using Ollama.Infrastructure.Tools;
 using Ollama.Infrastructure.Services;
@@ -15,17 +16,20 @@ namespace Ollama.Infrastructure.Agents
         private readonly ILogger<IntelligentAgent> _logger;
         private readonly IPythonSubsystemService _pythonService;
         private readonly IPythonLlmClient _pythonClient;
+        private readonly IPlanningService _planningService;
 
         public IntelligentAgent(
             IToolRepository toolRepository, 
             ILogger<IntelligentAgent> logger,
             IPythonSubsystemService pythonService,
-            IPythonLlmClient pythonClient)
+            IPythonLlmClient pythonClient,
+            IPlanningService planningService)
         {
             _toolRepository = toolRepository;
             _logger = logger;
             _pythonService = pythonService;
             _pythonClient = pythonClient;
+            _planningService = planningService;
         }
 
         public string Think(string query)
@@ -347,38 +351,222 @@ namespace Ollama.Infrastructure.Agents
                     }
                 }
 
-                // Initialize a chat session for this query
-                var chatId = await _pythonClient.InitializeChatAsync(
-                    "llama3.2", 
-                    "You are a helpful AI assistant. Provide clear, accurate, and concise responses.");
-
-                try
+                // Use intelligent planning for this query
+                _logger.LogInformation("Using intelligent planning for query: {Query}", query);
+                
+                // Create execution context
+                var context = new Domain.Planning.ExecutionContext
                 {
-                    // Process the query through Python subsystem
-                    var parameters = new Dictionary<string, object>
+                    SessionId = Guid.NewGuid().ToString(),
+                    OriginalQuery = query
+                };
+
+                // Create initial plan
+                var initialPlan = await _planningService.CreateInitialPlanAsync(query, context);
+                _logger.LogInformation("📋 Created initial plan with {StepCount} steps. Complete: {IsComplete}", 
+                    initialPlan.Steps.Count, initialPlan.IsComplete);
+                
+                // Log planned models and tools
+                foreach (var step in initialPlan.Steps)
+                {
+                    if (!string.IsNullOrEmpty(step.Model))
                     {
-                        ["temperature"] = 0.7,
-                        ["max_tokens"] = 500
-                    };
+                        _logger.LogInformation("📊 Step {StepId} planned to use model: {Model} for {Purpose}", 
+                            step.Id, step.Model, step.Purpose);
+                    }
+                    if (!string.IsNullOrEmpty(step.Tool))
+                    {
+                        _logger.LogInformation("🔧 Step {StepId} planned to use tool: {Tool} for {Purpose}", 
+                            step.Id, step.Tool, step.Purpose);
+                    }
+                }
 
-                    var result = await _pythonClient.ProcessInstructionAsync(
-                        "llama3.2", 
-                        query, 
-                        chatId, 
-                        parameters);
-
+                // If it's a simple query that can be completed immediately
+                if (initialPlan.IsComplete && initialPlan.Steps.Count == 1)
+                {
+                    var step = initialPlan.Steps.First();
+                    var result = await ExecuteSimpleStepAsync(step, context);
                     return result;
                 }
-                finally
+
+                // For now, fall back to the basic approach for complex queries
+                // TODO: Implement full recursive planning loop
+                _logger.LogInformation("Complex query detected, using basic approach for now");
+                return await ExecuteBasicQueryAsync(query);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in HandleGeneralQueryAsync");
+                return $"I encountered an error while processing your request: {ex.Message}";
+            }
+        }
+
+        private async Task<string> ExecuteSimpleStepAsync(Domain.Planning.ExecutionStep step, Domain.Planning.ExecutionContext context)
+        {
+            _logger.LogInformation("🚀 Executing step {StepId}: {Purpose}", step.Id, step.Purpose);
+            
+            try
+            {
+                if (!string.IsNullOrEmpty(step.Tool))
                 {
-                    // Clean up the chat session
-                    await _pythonClient.CleanupChatAsync(chatId);
+                    _logger.LogInformation("🔧 Executing with tool: {Tool}", step.Tool);
+                    return await ExecuteToolStepAsync(step, context);
+                }
+                else if (!string.IsNullOrEmpty(step.Model))
+                {
+                    _logger.LogInformation("🤖 Executing with model: {Model}", step.Model);
+                    return await ExecuteModelStepAsync(step, context);
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ Step has no specific tool or model defined");
+                    return "Step completed without specific execution";
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing query through Python subsystem, falling back to local processing");
-                return HandleGeneralQuery(query);
+                _logger.LogError(ex, "❌ Error executing step {StepId}", step.Id);
+                return $"Error executing step: {ex.Message}";
+            }
+        }
+
+        private async Task<string> ExecuteToolStepAsync(Domain.Planning.ExecutionStep step, Domain.Planning.ExecutionContext context)
+        {
+            _logger.LogInformation("🔧 Starting tool execution: {Tool}", step.Tool);
+            
+            var tool = _toolRepository.GetToolByName(step.Tool!);
+            if (tool == null)
+            {
+                _logger.LogError("❌ Tool not found: {Tool}", step.Tool);
+                throw new InvalidOperationException($"Tool '{step.Tool}' not found");
+            }
+
+            _logger.LogInformation("✅ Tool found: {Tool} - {Description}", step.Tool, tool.Description ?? "No description");
+
+            // Create tool context from step parameters
+            var toolContext = new ToolContext();
+            
+            // Add the input parameter
+            var input = step.Parameters.GetValueOrDefault("input", context.OriginalQuery)?.ToString() ?? context.OriginalQuery;
+            toolContext.Parameters["input"] = input;
+            _logger.LogInformation("📝 Tool input: {Input}", input);
+            
+            // Copy step parameters to tool context
+            foreach (var param in step.Parameters)
+            {
+                toolContext.Parameters[param.Key] = param.Value;
+                _logger.LogDebug("🔧 Tool parameter: {Key} = {Value}", param.Key, param.Value);
+            }
+            
+            // Copy shared state
+            foreach (var state in context.SharedState)
+            {
+                toolContext.State[state.Key] = state.Value;
+            }
+
+            _logger.LogInformation("⚙️ Executing tool: {Tool}", step.Tool);
+            var result = await tool.RunAsync(toolContext);
+            
+            if (!result.Success)
+            {
+                _logger.LogError("❌ Tool execution failed: {Tool} - {Error}", step.Tool, result.ErrorMessage);
+                throw new InvalidOperationException($"Tool execution failed: {result.ErrorMessage}");
+            }
+
+            var output = result.Output?.ToString() ?? "Tool executed successfully";
+            _logger.LogInformation("✅ Tool execution completed: {Tool} - Output length: {Length} chars", 
+                step.Tool, output.Length);
+            
+            return output;
+        }
+
+        private async Task<string> ExecuteModelStepAsync(Domain.Planning.ExecutionStep step, Domain.Planning.ExecutionContext context)
+        {
+            var prompt = step.EnhancedPrompt ?? step.Parameters.GetValueOrDefault("prompt", context.OriginalQuery)?.ToString() ?? context.OriginalQuery;
+            var model = step.Model!;
+
+            _logger.LogInformation("🤖 Starting model execution with: {Model}", model);
+            _logger.LogInformation("📝 Model prompt: {Prompt}", prompt.Length > 100 ? prompt.Substring(0, 100) + "..." : prompt);
+
+            // Log model parameters
+            var parameters = new Dictionary<string, object>(step.Parameters);
+            if (!parameters.ContainsKey("temperature"))
+                parameters["temperature"] = 0.7;
+            if (!parameters.ContainsKey("max_tokens"))
+                parameters["max_tokens"] = 500;
+
+            foreach (var param in parameters)
+            {
+                _logger.LogInformation("⚙️ Model parameter: {Key} = {Value}", param.Key, param.Value);
+            }
+
+            // Initialize chat session for this step
+            _logger.LogInformation("🔗 Initializing chat session for model: {Model}", model);
+            var chatId = await _pythonClient.InitializeChatAsync(model, "You are a helpful AI assistant.");
+            _logger.LogInformation("✅ Chat session created: {ChatId}", chatId);
+
+            try
+            {
+                _logger.LogInformation("🚀 Processing instruction with model: {Model}", model);
+                var result = await _pythonClient.ProcessInstructionAsync(model, prompt, chatId, parameters);
+                
+                _logger.LogInformation("✅ Model execution completed: {Model} - Response length: {Length} chars", 
+                    model, result.Length);
+                _logger.LogDebug("📄 Model response: {Response}", result.Length > 200 ? result.Substring(0, 200) + "..." : result);
+                
+                return result;
+            }
+            finally
+            {
+                // Cleanup chat session
+                _logger.LogInformation("🧹 Cleaning up chat session: {ChatId}", chatId);
+                await _pythonClient.CleanupChatAsync(chatId);
+                _logger.LogDebug("✅ Chat session cleanup completed");
+            }
+        }
+
+        private async Task<string> ExecuteBasicQueryAsync(string query)
+        {
+            const string basicModel = "llama3.1:8b";
+            
+            _logger.LogInformation("🔄 Falling back to basic query execution with model: {Model}", basicModel);
+            
+            // Fallback to the basic approach
+            var chatId = await _pythonClient.InitializeChatAsync(
+                basicModel, 
+                "You are a helpful AI assistant. Provide clear, accurate, and concise responses.");
+            
+            _logger.LogInformation("✅ Basic chat session created: {ChatId}", chatId);
+
+            try
+            {
+                var parameters = new Dictionary<string, object>
+                {
+                    ["temperature"] = 0.7,
+                    ["max_tokens"] = 500
+                };
+                
+                _logger.LogInformation("🚀 Processing basic query with model: {Model}", basicModel);
+                foreach (var param in parameters)
+                {
+                    _logger.LogDebug("⚙️ Basic parameter: {Key} = {Value}", param.Key, param.Value);
+                }
+
+                var result = await _pythonClient.ProcessInstructionAsync(
+                    basicModel, 
+                    query, 
+                    chatId, 
+                    parameters);
+
+                _logger.LogInformation("✅ Basic execution completed with model: {Model} - Response length: {Length} chars", 
+                    basicModel, result.Length);
+                
+                return result;
+            }
+            finally
+            {
+                _logger.LogInformation("🧹 Cleaning up basic chat session: {ChatId}", chatId);
+                await _pythonClient.CleanupChatAsync(chatId);
             }
         }
 

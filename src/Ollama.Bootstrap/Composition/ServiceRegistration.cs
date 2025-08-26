@@ -4,6 +4,7 @@ using Ollama.Application.Modes;
 using Ollama.Application.Orchestrator;
 using Ollama.Application.Services;
 using Ollama.Domain.Agents;
+using Ollama.Domain.Services;
 using Ollama.Domain.Strategies;
 using Ollama.Domain.Tools;
 using Ollama.Infrastructure.Agents;
@@ -25,6 +26,10 @@ public static class ServiceRegistration
             client.BaseAddress = new Uri("http://localhost:8000");
             client.Timeout = TimeSpan.FromSeconds(30);
         });
+
+        // Register planning services
+        services.AddSingleton<IModelRegistryService, ModelRegistryService>();
+        services.AddSingleton<IPlanningService, PlanningService>();
 
         // Register domain services
         services.AddSingleton<ExecutionTreeBuilder>();
@@ -64,8 +69,9 @@ public static class ServiceRegistration
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<IntelligentAgent>>();
             var pythonService = provider.GetRequiredService<IPythonSubsystemService>();
             var pythonClient = provider.GetRequiredService<IPythonLlmClient>();
+            var planningService = provider.GetRequiredService<IPlanningService>();
             
-            return new IntelligentAgent(toolRepository, logger, pythonService, pythonClient);
+            return new IntelligentAgent(toolRepository, logger, pythonService, pythonClient, planningService);
         });
 
         // Register agents

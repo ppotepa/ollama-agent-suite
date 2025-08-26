@@ -11,6 +11,18 @@ using Ollama.Infrastructure.Clients;
 using Ollama.Infrastructure.Agents;
 using Ollama.Domain.Tools;
 
+
+// Clear the console at the very start
+if (OperatingSystem.IsWindows())
+{
+    System.Console.Clear();
+}
+else
+{
+    // ANSI escape code for clear screen (for Linux/macOS)
+    System.Console.Write("\x1b[2J\x1b[H");
+}
+
 Console.WriteLine("🚀 Starting OllamaAgentSuite CLI...");
 Console.WriteLine($"📝 Command line arguments: {string.Join(" ", args)}");
 
@@ -22,9 +34,27 @@ try
 
     Console.WriteLine("📁 Setting up configuration...");
     
+    // Get the solution root directory (go up from bin/Debug/net9.0)
+    var currentDir = Directory.GetCurrentDirectory();
+    var solutionRoot = currentDir;
+    
+    // Find the solution root by looking for the .sln file
+    while (!Directory.GetFiles(solutionRoot, "*.sln").Any() && Directory.GetParent(solutionRoot) != null)
+    {
+        solutionRoot = Directory.GetParent(solutionRoot)!.FullName;
+    }
+    
+    var configPath = Path.Combine(solutionRoot, "config", "appsettings.json");
+    Console.WriteLine($"📁 Looking for config at: {configPath}");
+    
     // Add configuration
-    builder.Configuration.AddJsonFile("config/appsettings.json", optional: false, reloadOnChange: true);
-    builder.Configuration.AddJsonFile($"config/appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
+    builder.Configuration.AddJsonFile(configPath, optional: false, reloadOnChange: true);
+    builder.Configuration.AddJsonFile(Path.Combine(solutionRoot, "config", $"appsettings.{builder.Environment.EnvironmentName}.json"), optional: true, reloadOnChange: true);
+    
+    // Update Python subsystem path to be relative to solution root
+    var pythonSubsystemPath = Path.Combine(solutionRoot, "python_subsystem");
+    builder.Configuration["PythonSubsystem:Path"] = pythonSubsystemPath;
+    Console.WriteLine($"📁 Setting Python subsystem path to: {pythonSubsystemPath}");
 
     Console.WriteLine("🔧 Registering services...");
     
@@ -119,6 +149,15 @@ try
             var pythonService = app.Services.GetRequiredService<IPythonSubsystemService>();
             Console.WriteLine("  ✅ IPythonSubsystemService resolved");
             
+            Console.WriteLine("  ➤ Starting Python subsystem in isolated process...");
+            var started = await pythonService.StartAsync();
+            if (!started)
+            {
+                Console.WriteLine("  ❌ Failed to start Python subsystem");
+                return 1;
+            }
+            Console.WriteLine("  ✅ Python subsystem started successfully");
+            
             Console.WriteLine("  ➤ Getting IPythonLlmClient...");
             var pythonClient = app.Services.GetRequiredService<IPythonLlmClient>();
             Console.WriteLine("  ✅ IPythonLlmClient resolved");
@@ -180,6 +219,24 @@ try
         Console.WriteLine($"❌ Service resolution error: {serviceEx.Message}");
         Console.WriteLine($"❌ Service stack trace: {serviceEx.StackTrace}");
         throw;
+    }
+    finally
+    {
+        // Cleanup Python subsystem if it was started
+        if (mode?.ToLowerInvariant() == "intelligent")
+        {
+            try
+            {
+                Console.WriteLine("🧹 Cleaning up Python subsystem...");
+                var pythonService = app.Services.GetRequiredService<IPythonSubsystemService>();
+                await pythonService.StopAsync();
+                Console.WriteLine("✅ Python subsystem cleanup completed");
+            }
+            catch (Exception cleanupEx)
+            {
+                Console.WriteLine($"⚠️ Warning during cleanup: {cleanupEx.Message}");
+            }
+        }
     }
 }
 catch (Exception ex)

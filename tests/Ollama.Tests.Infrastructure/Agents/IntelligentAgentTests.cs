@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using NUnit.Framework;
 using Ollama.Domain.Tools;
+using Ollama.Domain.Services;
 using Ollama.Infrastructure.Agents;
 using Ollama.Infrastructure.Tools;
 using Ollama.Infrastructure.Services;
@@ -18,6 +19,7 @@ public class IntelligentAgentTests
     private Mock<ITool> _mockMathTool = null!;
     private Mock<IPythonSubsystemService> _mockPythonService = null!;
     private Mock<IPythonLlmClient> _mockPythonClient = null!;
+    private Mock<IPlanningService> _mockPlanningService = null!;
 
     [SetUp]
     public void SetUp()
@@ -26,12 +28,13 @@ public class IntelligentAgentTests
         _mockLogger = new Mock<ILogger<IntelligentAgent>>();
         _mockPythonService = new Mock<IPythonSubsystemService>();
         _mockPythonClient = new Mock<IPythonLlmClient>();
+        _mockPlanningService = new Mock<IPlanningService>();
         
         _mockMathTool = new Mock<ITool>();
         _mockMathTool.Setup(t => t.Name).Returns("MathEvaluator");
         _mockMathTool.Setup(t => t.Capabilities).Returns(new[] { "math:evaluate" });
         
-        _agent = new IntelligentAgent(_mockToolRepository.Object, _mockLogger.Object, _mockPythonService.Object, _mockPythonClient.Object);
+        _agent = new IntelligentAgent(_mockToolRepository.Object, _mockLogger.Object, _mockPythonService.Object, _mockPythonClient.Object, _mockPlanningService.Object);
     }
 
     [Test]

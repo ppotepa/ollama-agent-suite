@@ -31,6 +31,9 @@ namespace Ollama.Bootstrap.Configuration
             configuration.GetSection("Infrastructure").Bind(infrastructureSettings);
             services.AddSingleton(infrastructureSettings);
 
+            // Configure PythonSubsystemSettings
+            services.Configure<PythonSubsystemSettings>(configuration.GetSection("PythonSubsystem"));
+
             // Register model repository
             services.AddSingleton<IModelRepository, OllamaModelRepository>();
 
