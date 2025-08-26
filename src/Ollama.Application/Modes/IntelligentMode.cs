@@ -1,32 +1,37 @@
 using Ollama.Application.Services;
 using Ollama.Domain.Strategies;
+using Ollama.Domain.Agents;
 
 namespace Ollama.Application.Modes;
 
 public sealed class IntelligentMode : IModeStrategy
 {
-    private readonly object _thinker; // keep generic; only needs a Think method
+    private readonly IAgent _agent;
     private readonly AgentSwitchService _agentSwitchService;
     private readonly ExecutionTreeBuilder _treeBuilder;
 
     public StrategyType Type => StrategyType.Intelligent;
 
-    public IntelligentMode(object thinker, AgentSwitchService agentSwitchService, ExecutionTreeBuilder treeBuilder)
+    public IntelligentMode(IAgent agent, AgentSwitchService agentSwitchService, ExecutionTreeBuilder treeBuilder)
     {
-        _thinker = thinker;
+        _agent = agent;
         _agentSwitchService = agentSwitchService;
         _treeBuilder = treeBuilder;
     }
 
     public bool CanHandle(Domain.Strategies.ExecutionContext ctx)
     {
-        // Check if query indicates complex autonomous work
+        // Intelligent mode can handle any query, but prefers complex ones
         var query = ctx.Query.ToLowerInvariant();
-        return query.Contains("debug") || 
-               query.Contains("autonomous") || 
+        return query.Contains("what is") || 
+               query.Contains("calculate") || 
+               query.Contains("solve") ||
+               query.Contains("analyze") ||
+               query.Contains("repository") ||
+               query.Contains("github.com") ||
                query.Contains("intelligent") ||
-               query.Contains("dynamic") ||
-               query.Contains("complex");
+               query.Contains("think") ||
+               query.Length > 20; // Longer queries might benefit from intelligent processing
     }
 
     public Dictionary<string, object> Execute(Domain.Strategies.ExecutionContext ctx)
@@ -36,25 +41,18 @@ public sealed class IntelligentMode : IModeStrategy
         // Start building execution tree
         _treeBuilder.Begin(ctx.Query);
 
-        // Use reflection to call Think method on the thinker object
-        var thinkerType = _thinker.GetType();
-        var thinkMethod = thinkerType.GetMethod("Think");
-        
-        if (thinkMethod == null)
-            throw new InvalidOperationException("Thinker object must have a Think method");
-
-        var reasoning = thinkMethod.Invoke(_thinker, new object[] { ctx.Query })?.ToString() ?? "";
+        // Use the intelligent agent to think about the problem
+        var reasoning = _agent.Think(ctx.Query);
         _treeBuilder.AddAnalysis(reasoning);
 
-        // Dynamically decide on next steps based on reasoning
-        var steps = DetermineNextSteps(reasoning);
-        
-        foreach (var step in steps)
-        {
-            _treeBuilder.AddCommand(step);
-        }
+        // Get the agent's plan
+        var plan = _agent.Plan(ctx.Query);
+        _treeBuilder.AddCommand($"Plan: {plan}");
 
-        var result = "Intelligent execution completed with dynamic agent switching";
+        // Execute the plan and get the result
+        var result = _agent.Answer(ctx.Query);
+        _treeBuilder.AddCommand($"Execution completed");
+
         _treeBuilder.Finish(result);
 
         var executionTree = _treeBuilder.Build();
@@ -62,28 +60,11 @@ public sealed class IntelligentMode : IModeStrategy
         return new Dictionary<string, object>
         {
             ["reasoning"] = reasoning,
-            ["steps"] = steps,
+            ["plan"] = plan,
             ["executionTree"] = executionTree,
             ["result"] = result,
             ["strategy"] = Type.ToString(),
             ["sessionId"] = sessionId
         };
-    }
-
-    private List<string> DetermineNextSteps(string reasoning)
-    {
-        // Simple heuristic for determining next steps
-        var steps = new List<string>();
-        
-        if (reasoning.ToLowerInvariant().Contains("analyze"))
-            steps.Add("Perform deep analysis");
-        
-        if (reasoning.ToLowerInvariant().Contains("code") || reasoning.ToLowerInvariant().Contains("implement"))
-            steps.Add("Generate implementation");
-        
-        if (reasoning.ToLowerInvariant().Contains("test") || reasoning.ToLowerInvariant().Contains("verify"))
-            steps.Add("Run verification tests");
-
-        return steps.Any() ? steps : new List<string> { "Execute default action" };
     }
 }

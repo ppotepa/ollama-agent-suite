@@ -1,11 +1,14 @@
+using NUnit.Framework;
 using Ollama.Application.Services;
 using Ollama.Domain.Execution;
+using System;
 
 namespace Ollama.Tests.Application;
 
+[TestFixture]
 public class ExecutionTreeBuilderTests
 {
-    [Fact]
+    [Test]
     public void ExecutionTreeBuilder_ShouldBuildSimpleTree()
     {
         // Arrange
@@ -19,16 +22,16 @@ public class ExecutionTreeBuilderTests
             .Build();
 
         // Assert
-        Assert.Equal(ExecutionNodeType.UserQuery, tree.NodeType);
-        Assert.Equal("Test query", tree.Content);
-        Assert.Single(tree.Children);
+        Assert.That(tree.NodeType, Is.EqualTo(ExecutionNodeType.UserQuery));
+        Assert.That(tree.Content, Is.EqualTo("Test query"));
+        Assert.That(tree.Children.Count, Is.EqualTo(1));
         
         var analysisNode = tree.Children[0];
-        Assert.Equal(ExecutionNodeType.InterceptorAnalysis, analysisNode.NodeType);
-        Assert.Equal("Analysis result", analysisNode.Content);
+        Assert.That(analysisNode.NodeType, Is.EqualTo(ExecutionNodeType.InterceptorAnalysis));
+        Assert.That(analysisNode.Content, Is.EqualTo("Analysis result"));
     }
 
-    [Fact]
+    [Test]
     public void ExecutionTreeBuilder_ShouldThrowWhenBuildWithoutBegin()
     {
         // Arrange
@@ -39,9 +42,10 @@ public class ExecutionTreeBuilderTests
     }
 }
 
+[TestFixture]
 public class CollaborationContextServiceTests
 {
-    [Fact]
+    [Test]
     public void CollaborationContextService_ShouldAddAndRetrieveNotes()
     {
         // Arrange
@@ -55,12 +59,12 @@ public class CollaborationContextServiceTests
         var notes = service.GetNotes();
 
         // Assert
-        Assert.Equal(2, notes.Count);
-        Assert.Contains(note1, notes);
-        Assert.Contains(note2, notes);
+        Assert.That(notes.Count, Is.EqualTo(2));
+        Assert.That(notes, Contains.Item(note1));
+        Assert.That(notes, Contains.Item(note2));
     }
 
-    [Fact]
+    [Test]
     public void CollaborationContextService_ShouldClearNotes()
     {
         // Arrange
@@ -72,6 +76,6 @@ public class CollaborationContextServiceTests
         var notes = service.GetNotes();
 
         // Assert
-        Assert.Empty(notes);
+        Assert.That(notes.Count, Is.EqualTo(0));
     }
 }

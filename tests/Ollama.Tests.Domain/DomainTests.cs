@@ -1,11 +1,13 @@
+using NUnit.Framework;
 using Ollama.Domain.Execution;
 using Ollama.Domain.Strategies;
 
 namespace Ollama.Tests.Domain;
 
+[TestFixture]
 public class ExecutionNodeTests
 {
-    [Fact]
+    [Test]
     public void ExecutionNode_ShouldCreateWithTypeAndContent()
     {
         // Arrange
@@ -16,13 +18,13 @@ public class ExecutionNodeTests
         var node = new ExecutionNode(nodeType, content);
 
         // Assert
-        Assert.Equal(nodeType, node.NodeType);
-        Assert.Equal(content, node.Content);
-        Assert.Empty(node.Children);
-        Assert.Null(node.Parent);
+        Assert.That(node.NodeType, Is.EqualTo(nodeType));
+        Assert.That(node.Content, Is.EqualTo(content));
+        Assert.That(node.Children.Count, Is.EqualTo(0));
+        Assert.That(node.Parent, Is.Null);
     }
 
-    [Fact]
+    [Test]
     public void ExecutionNode_ShouldAddChildWithParentReference()
     {
         // Arrange
@@ -33,15 +35,16 @@ public class ExecutionNodeTests
         parent.AddChild(child);
 
         // Assert
-        Assert.Single(parent.Children);
-        Assert.Equal(child, parent.Children[0]);
-        Assert.Equal(parent, child.Parent);
+        Assert.That(parent.Children.Count, Is.EqualTo(1));
+        Assert.That(parent.Children[0], Is.EqualTo(child));
+        Assert.That(child.Parent, Is.EqualTo(parent));
     }
 }
 
+[TestFixture]
 public class ExecutionContextTests
 {
-    [Fact]
+    [Test]
     public void ExecutionContext_ShouldCreateWithQuery()
     {
         // Arrange
@@ -51,12 +54,12 @@ public class ExecutionContextTests
         var context = new Ollama.Domain.Strategies.ExecutionContext(query);
 
         // Assert
-        Assert.Equal(query, context.Query);
-        Assert.Null(context.SessionId);
-        Assert.Empty(context.Metadata);
+        Assert.That(context.Query, Is.EqualTo(query));
+        Assert.That(context.SessionId, Is.Null);
+        Assert.That(context.Metadata.Count, Is.EqualTo(0));
     }
 
-    [Fact]
+    [Test]
     public void ExecutionContext_ShouldCreateWithQueryAndSessionId()
     {
         // Arrange
@@ -67,7 +70,7 @@ public class ExecutionContextTests
         var context = new Ollama.Domain.Strategies.ExecutionContext(query, sessionId);
 
         // Assert
-        Assert.Equal(query, context.Query);
-        Assert.Equal(sessionId, context.SessionId);
+        Assert.That(context.Query, Is.EqualTo(query));
+        Assert.That(context.SessionId, Is.EqualTo(sessionId));
     }
 }

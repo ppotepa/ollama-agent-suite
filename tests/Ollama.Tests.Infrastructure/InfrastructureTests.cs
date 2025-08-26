@@ -1,10 +1,12 @@
+using NUnit.Framework;
 using Ollama.Infrastructure.Agents;
 
 namespace Ollama.Tests.Infrastructure;
 
+[TestFixture]
 public class UniversalAgentAdapterTests
 {
-    [Fact]
+    [Test]
     public void UniversalAgentAdapter_ShouldAnswerQueries()
     {
         // Arrange
@@ -15,11 +17,11 @@ public class UniversalAgentAdapterTests
         var response = agent.Answer(prompt);
 
         // Assert
-        Assert.Contains("test-model", response);
-        Assert.Contains(prompt, response);
+        Assert.That(response, Does.Contain("test-model"));
+        Assert.That(response, Does.Contain(prompt));
     }
 
-    [Fact]
+    [Test]
     public void UniversalAgentAdapter_ShouldThinkAboutPrompts()
     {
         // Arrange
@@ -30,12 +32,12 @@ public class UniversalAgentAdapterTests
         var thinking = agent.Think(prompt);
 
         // Assert
-        Assert.Contains("test-model", thinking);
-        Assert.Contains(prompt, thinking);
-        Assert.Contains("Thinking", thinking);
+        Assert.That(thinking, Does.Contain("test-model"));
+        Assert.That(thinking, Does.Contain(prompt));
+        Assert.That(thinking, Does.Contain("Thinking"));
     }
 
-    [Fact]
+    [Test]
     public void UniversalAgentAdapter_ShouldCreatePlans()
     {
         // Arrange
@@ -46,11 +48,11 @@ public class UniversalAgentAdapterTests
         var plan = agent.Plan(prompt);
 
         // Assert
-        Assert.NotNull(plan);
+        Assert.That(plan, Is.Not.Null);
         // Additional assertions would depend on the actual implementation
     }
 
-    [Fact]
+    [Test]
     public void UniversalAgentAdapter_ShouldExecuteInstructions()
     {
         // Arrange
@@ -61,7 +63,7 @@ public class UniversalAgentAdapterTests
         var result = agent.Act(instruction);
 
         // Assert
-        Assert.NotNull(result);
+        Assert.That(result, Is.Not.Null);
         // Additional assertions would depend on the actual implementation
     }
 }
