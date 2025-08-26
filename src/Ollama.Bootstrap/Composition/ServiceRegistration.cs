@@ -8,6 +8,9 @@ using Ollama.Domain.Strategies;
 using Ollama.Domain.Tools;
 using Ollama.Infrastructure.Agents;
 using Ollama.Infrastructure.Tools;
+using Ollama.Infrastructure.Services;
+using Ollama.Infrastructure.Clients;
+using Ollama.Domain.Configuration;
 using System.Net.Http;
 
 namespace Ollama.Bootstrap.Composition;
@@ -16,6 +19,13 @@ public static class ServiceRegistration
 {
     public static IServiceCollection AddOllamaServices(this IServiceCollection services)
     {
+        // Register Python subsystem services
+        services.AddSingleton<IPythonSubsystemService, PythonSubsystemService>();
+        services.AddHttpClient<IPythonLlmClient, PythonLlmClient>(client => {
+            client.BaseAddress = new Uri("http://localhost:8000");
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+
         // Register domain services
         services.AddSingleton<ExecutionTreeBuilder>();
         services.AddSingleton<CollaborationContextService>();
@@ -25,18 +35,18 @@ public static class ServiceRegistration
         services.AddHttpClient();
         
         // Register tool repository and tools
-        services.AddSingleton<IToolRepository, ToolRepository>();
         services.AddTransient<MathEvaluator>();
         services.AddTransient<GitHubRepositoryDownloader>();
         services.AddTransient<FileSystemAnalyzer>();
         services.AddTransient<CodeAnalyzer>();
         
-        // Configure tool repository with tools
-        services.AddSingleton(serviceProvider =>
+        // Configure tool repository with tools using a factory
+        services.AddSingleton<IToolRepository>(serviceProvider =>
         {
-            var toolRepository = serviceProvider.GetRequiredService<IToolRepository>();
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             var logger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ToolRepository>>();
+            
+            var toolRepository = new ToolRepository(logger);
             
             // Register all tools
             toolRepository.RegisterTool(new MathEvaluator());
@@ -47,8 +57,16 @@ public static class ServiceRegistration
             return toolRepository;
         });
 
-        // Register intelligent agent
-        services.AddSingleton<IntelligentAgent>();
+        // Register intelligent agent with explicit factory
+        services.AddSingleton<IntelligentAgent>(provider =>
+        {
+            var toolRepository = provider.GetRequiredService<IToolRepository>();
+            var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<IntelligentAgent>>();
+            var pythonService = provider.GetRequiredService<IPythonSubsystemService>();
+            var pythonClient = provider.GetRequiredService<IPythonLlmClient>();
+            
+            return new IntelligentAgent(toolRepository, logger, pythonService, pythonClient);
+        });
 
         // Register agents
         services.AddSingleton<IAgent>(provider => new UniversalAgentAdapter("llama2"));

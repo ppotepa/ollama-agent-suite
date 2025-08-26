@@ -4,28 +4,34 @@ using NUnit.Framework;
 using Ollama.Domain.Tools;
 using Ollama.Infrastructure.Agents;
 using Ollama.Infrastructure.Tools;
+using Ollama.Infrastructure.Services;
+using Ollama.Infrastructure.Clients;
 
 namespace Ollama.Tests.Infrastructure.Agents;
 
 [TestFixture]
 public class IntelligentAgentTests
 {
-    private IntelligentAgent _agent;
-    private Mock<IToolRepository> _mockToolRepository;
-    private Mock<ILogger<IntelligentAgent>> _mockLogger;
-    private Mock<ITool> _mockMathTool;
+    private IntelligentAgent _agent = null!;
+    private Mock<IToolRepository> _mockToolRepository = null!;
+    private Mock<ILogger<IntelligentAgent>> _mockLogger = null!;
+    private Mock<ITool> _mockMathTool = null!;
+    private Mock<IPythonSubsystemService> _mockPythonService = null!;
+    private Mock<IPythonLlmClient> _mockPythonClient = null!;
 
     [SetUp]
     public void SetUp()
     {
         _mockToolRepository = new Mock<IToolRepository>();
         _mockLogger = new Mock<ILogger<IntelligentAgent>>();
+        _mockPythonService = new Mock<IPythonSubsystemService>();
+        _mockPythonClient = new Mock<IPythonLlmClient>();
         
         _mockMathTool = new Mock<ITool>();
         _mockMathTool.Setup(t => t.Name).Returns("MathEvaluator");
         _mockMathTool.Setup(t => t.Capabilities).Returns(new[] { "math:evaluate" });
         
-        _agent = new IntelligentAgent(_mockToolRepository.Object, _mockLogger.Object);
+        _agent = new IntelligentAgent(_mockToolRepository.Object, _mockLogger.Object, _mockPythonService.Object, _mockPythonClient.Object);
     }
 
     [Test]
@@ -106,7 +112,7 @@ public class IntelligentAgentTests
     }
 
     [Test]
-    public async Task Answer_WithSimpleArithmetic_ShouldUseMathTool()
+    public void Answer_WithSimpleArithmetic_ShouldUseMathTool()
     {
         // Arrange
         var query = "What is 2 + 2?";
@@ -130,7 +136,7 @@ public class IntelligentAgentTests
     }
 
     [Test]
-    public async Task Answer_WithInvalidArithmetic_ShouldHandleError()
+    public void Answer_WithInvalidArithmetic_ShouldHandleError()
     {
         // Arrange
         var query = "What is 5 / 0?";

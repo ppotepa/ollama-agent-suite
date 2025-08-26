@@ -1,6 +1,8 @@
 using Ollama.Domain.Agents;
 using Ollama.Domain.Tools;
 using Ollama.Infrastructure.Tools;
+using Ollama.Infrastructure.Services;
+using Ollama.Infrastructure.Clients;
 using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -11,11 +13,19 @@ namespace Ollama.Infrastructure.Agents
     {
         private readonly IToolRepository _toolRepository;
         private readonly ILogger<IntelligentAgent> _logger;
+        private readonly IPythonSubsystemService _pythonService;
+        private readonly IPythonLlmClient _pythonClient;
 
-        public IntelligentAgent(IToolRepository toolRepository, ILogger<IntelligentAgent> logger)
+        public IntelligentAgent(
+            IToolRepository toolRepository, 
+            ILogger<IntelligentAgent> logger,
+            IPythonSubsystemService pythonService,
+            IPythonLlmClient pythonClient)
         {
             _toolRepository = toolRepository;
             _logger = logger;
+            _pythonService = pythonService;
+            _pythonClient = pythonClient;
         }
 
         public string Think(string query)
@@ -52,7 +62,7 @@ namespace Ollama.Infrastructure.Agents
             {
                 QueryType.SimpleArithmetic => HandleArithmeticAsync(query).Result,
                 QueryType.RepositoryAnalysis => HandleRepositoryAnalysisAsync(query).Result,
-                _ => HandleGeneralQuery(query)
+                _ => HandleGeneralQueryAsync(query).Result
             };
         }
 
@@ -319,6 +329,57 @@ namespace Ollama.Infrastructure.Agents
         {
             return "I'm an intelligent agent that can handle arithmetic calculations and repository analysis. " +
                    "For other types of queries, I would need integration with a language model.";
+        }
+
+        private async Task<string> HandleGeneralQueryAsync(string query)
+        {
+            try
+            {
+                // Ensure Python service is running for LLM queries
+                if (!_pythonService.IsRunning)
+                {
+                    _logger.LogInformation("Starting Python subsystem for LLM processing...");
+                    var started = await _pythonService.StartAsync();
+                    if (!started)
+                    {
+                        _logger.LogWarning("Failed to start Python subsystem, falling back to local processing");
+                        return HandleGeneralQuery(query);
+                    }
+                }
+
+                // Initialize a chat session for this query
+                var chatId = await _pythonClient.InitializeChatAsync(
+                    "llama3.2", 
+                    "You are a helpful AI assistant. Provide clear, accurate, and concise responses.");
+
+                try
+                {
+                    // Process the query through Python subsystem
+                    var parameters = new Dictionary<string, object>
+                    {
+                        ["temperature"] = 0.7,
+                        ["max_tokens"] = 500
+                    };
+
+                    var result = await _pythonClient.ProcessInstructionAsync(
+                        "llama3.2", 
+                        query, 
+                        chatId, 
+                        parameters);
+
+                    return result;
+                }
+                finally
+                {
+                    // Clean up the chat session
+                    await _pythonClient.CleanupChatAsync(chatId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing query through Python subsystem, falling back to local processing");
+                return HandleGeneralQuery(query);
+            }
         }
 
         private enum QueryType
