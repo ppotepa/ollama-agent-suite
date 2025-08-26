@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Ollama.Domain\Ollama.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Ollama.Infrastructure\Ollama.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
