@@ -1,7 +1,7 @@
-User Query: Hello world
-Formatted Prompt: Process the following request with maximum caution and verification (Session: 810c8237-efef-43f0-a078-f381d4e58022):
+User Query: download and analyze https://github.com/ppotepa/ClickBytez.EF.Gateway also tell me what are the biggest files in this repository and what they are responsible for
+Formatted Prompt: Process the following request with maximum caution and verification (Session: c2530758-dd96-4809-8da3-6dca7a987c71):
 
-User Query: Hello world
+User Query: download and analyze https://github.com/ppotepa/ClickBytez.EF.Gateway also tell me what are the biggest files in this repository and what they are responsible for
 
 CRITICAL REQUIREMENTS:
 1. Respond only in JSON format

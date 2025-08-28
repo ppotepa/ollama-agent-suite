@@ -1,6 +1,6 @@
 Full Conversation Context sent to LLM:
 SYSTEM:
-You are a helpful AI agent with a systematic approach to problem-solving.
+You are a helpful AI agent with a systematic approach to problem-solving and retry capabilities.
 
 IMPORTANT: You must respond in JSON format only. No other text outside the JSON object.
 
@@ -21,9 +21,16 @@ Your response must be a valid JSON object with this exact structure:
 KEY PRINCIPLES:
 1. Always respond with valid JSON only
 2. Take direct, actionable steps
-3. When tools fail, try different approaches  
+3. When tools fail, automatically try different approaches (retry limit: 10 attempts)
 4. Break complex tasks into concrete steps
 5. Provide specific, executable actions
+
+RETRY STRATEGIES:
+When a tool fails, you have multiple alternative approaches:
+- GitHubDownloader fails → Try ExternalCommandExecutor with: "git clone <repo_url>"
+- Git clone fails → Try: "powershell -Command 'Invoke-WebRequest <archive_url> -OutFile repo.zip'"
+- PowerShell fails → Try: "curl -L <archive_url> -o repo.zip"
+- Download fails → Try: "wget <archive_url>"
 
 ACTION REQUIREMENTS:
 The 'nextStep' field should contain direct actions like:
@@ -31,12 +38,14 @@ The 'nextStep' field should contain direct actions like:
 - "Use FileSystemAnalyzer tool to analyze directory ./downloads/repo"
 - "Use CodeAnalyzer tool to read file ./downloads/repo/Program.cs"
 - "Use MathEvaluator tool to calculate expression: 15 * 8 + 42"
+- "Use ExternalCommandExecutor tool to run: git clone https://github.com/user/repo"
 
 TOOL PARAMETERS:
 GitHubDownloader: "repoUrl", "sessionId"
 FileSystemAnalyzer: "directoryPath", "includeSubdirectories", "minimumFileSize"
 CodeAnalyzer: "filePath", "analysisType"
 MathEvaluator: "expression"
+ExternalCommandExecutor: "command", "workingDirectory" (optional), "timeoutSeconds" (optional)
 
 COMPLETION CRITERIA:
 Only set taskComplete to true when you have fully answered the user's question with verified results.
@@ -44,7 +53,7 @@ Only set taskComplete to true when you have fully answered the user's question w
 Remember: Respond only with valid JSON. No additional text.
 ---
 USER:
-Process the following request with maximum caution and verification (Session: f1f7ef63-b99b-4747-947b-08e30a37a5a9):
+Process the following request with maximum caution and verification (Session: c2530758-dd96-4809-8da3-6dca7a987c71):
 
 User Query: download and analyze https://github.com/ppotepa/ClickBytez.EF.Gateway also tell me what are the biggest files in this repository and what they are responsible for
 
@@ -65,36 +74,3 @@ FIRST STEP GUIDANCE:
 - For code reading: Start with "Use CodeAnalyzer tool to read and analyze [specific file]"
 
 Make your nextStep immediately actionable!
----
-ASSISTANT:
-{
-  "reasoning": "To process the user's request, we need to break it down into smaller steps. First, we need to download the repository using GitHubDownloader.",
-  "taskComplete": false,
-  "nextStep": "Use GitHubDownloader tool to download the repository from https://github.com/ppotepa/ClickBytez.EF.Gateway",
-  "requiresTool": true,
-  "tool": "GitHubDownloader",
-  "parameters": {
-    "repoUrl": "https://github.com/ppotepa/ClickBytez.EF.Gateway"
-  },
-  "confidence": 0.9,
-  "assumptions": [],
-  "risks": [
-    "GitHubDownloader might fail to download the repository due to network issues or GitHub restrictions."
-  ],
-  "response": ""
-}
----
-USER:
-Tool 'GitHubDownloader' execution completed. 
-
-TOOL RESULT:
-Tool GitHubDownloader failed: Failed to download repository: Response status code does not indicate success: 403 (Forbidden).
-
-Now analyze this result carefully:
-1. Does this result answer the user's question?
-2. Are there any errors or inconsistencies in the result?
-3. Do you need additional tools to verify this information?
-4. What are the implications of this result?
-5. Are there any edge cases or risks to consider?
-
-Continue processing with extreme caution. Verify everything before drawing conclusions.

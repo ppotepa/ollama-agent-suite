@@ -17,6 +17,11 @@ public interface ILLMCommunicationService
         string strategy, List<InteractionHistory>? previousInteractions = null);
 
     /// <summary>
+    /// Send request to LLM and receive response
+    /// </summary>
+    Task<LLMResponseSchema> SendRequestAsync(LLMRequestSchema request, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Parse LLM response JSON into typed response schema
     /// </summary>
     LLMResponseSchema ParseResponseSchema(string jsonResponse);
@@ -83,6 +88,45 @@ public class LLMCommunicationService : ILLMCommunicationService
             sessionId, request.AvailableTools.Count);
 
         return request;
+    }
+
+    public Task<LLMResponseSchema> SendRequestAsync(LLMRequestSchema request, CancellationToken cancellationToken = default)
+    {
+        // Mock implementation - just returns a mock response
+        _logger.LogWarning("Using mock LLM communication service - no actual LLM call made");
+        
+        var mockResponse = new LLMResponseSchema
+        {
+            SessionId = request.SessionId,
+            Status = new ResponseStatus
+            {
+                Success = true,
+                StatusCode = "MOCK",
+                Message = "Mock response from LLMCommunicationService"
+            },
+            NextStep = new ExecutableStep
+            {
+                StepNumber = 1,
+                Action = "Mock action",
+                ToolName = "None",
+                Parameters = new Dictionary<string, object>(),
+                ExpectedOutcome = "Mock outcome"
+            },
+            Confidence = new ConfidenceMetrics
+            {
+                OverallConfidence = 0.5,
+                AnalysisConfidence = 0.5,
+                ActionConfidence = 0.5
+            },
+            Continuation = new ContinuationInfo
+            {
+                RequiresUserConfirmation = false,
+                IsComplete = true,
+                ProgressPercentage = 100
+            }
+        };
+
+        return Task.FromResult(mockResponse);
     }
 
     public LLMResponseSchema ParseResponseSchema(string jsonResponse)
@@ -257,7 +301,7 @@ public class LLMCommunicationService : ILLMCommunicationService
         };
     }
 
-    private LLMResponseSchema CreateErrorResponse(string errorMessage)
+    public LLMResponseSchema CreateErrorResponse(string errorMessage)
     {
         return new LLMResponseSchema
         {

@@ -24,7 +24,7 @@ public static class ServiceRegistration
         services.AddSingleton<ExecutionTreeBuilder>();
         services.AddSingleton<CollaborationContextService>();
         services.AddSingleton<AgentSwitchService>();
-        services.AddSingleton<ILLMCommunicationService, LLMCommunicationService>();
+        services.AddSingleton<ILLMCommunicationService, RealLLMCommunicationService>();
 
         // Register HTTP client for tools
         services.AddHttpClient();
@@ -71,8 +71,9 @@ public static class ServiceRegistration
             var ollamaClient = provider.GetRequiredService<BuiltInOllamaClient>();
             var communicationService = provider.GetRequiredService<ILLMCommunicationService>();
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ollama.Infrastructure.Agents.StrategicAgent>>();
+            var ollamaSettings = provider.GetRequiredService<OllamaSettings>();
             
-            return new Ollama.Infrastructure.Agents.StrategicAgent(strategy, sessionFileSystem, toolRepository, ollamaClient, communicationService, logger);
+            return new Ollama.Infrastructure.Agents.StrategicAgent(strategy, sessionFileSystem, toolRepository, ollamaClient, communicationService, logger, ollamaSettings.DefaultModel);
         });
 
         return services;

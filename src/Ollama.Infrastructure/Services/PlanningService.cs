@@ -15,7 +15,7 @@ namespace Ollama.Infrastructure.Services
         private readonly IToolRepository _toolRepository;
         private readonly IModelRegistryService _modelRegistry;
         private readonly ILogger<PlanningService> _logger;
-        private const string PLANNING_MODEL = "llama3.1:8b";
+        private const string PLANNING_MODEL = "phi:latest";
 
         public PlanningService(
             IPythonLlmClient pythonClient,
@@ -279,7 +279,7 @@ Respond with valid JSON following the ExecutionPlan schema.";
                     new ExecutionStep
                     {
                         Id = 1,
-                        Model = "llama3.1:8b",
+                        Model = "phi:latest",
                         AgentType = "General",
                         Purpose = "Answer the query directly",
                         ExpectedOutput = "Direct answer to the user's question",
