@@ -10,6 +10,7 @@ using Ollama.Infrastructure.Services;
 using Ollama.Infrastructure.Clients;
 using Ollama.Infrastructure.Agents;
 using Ollama.Domain.Tools;
+using Ollama.Interface.Cli;
 
 
 // Clear the console at the very start
@@ -25,6 +26,21 @@ else
 
 Console.WriteLine("🚀 Starting OllamaAgentSuite CLI...");
 Console.WriteLine($"📝 Command line arguments: {string.Join(" ", args)}");
+
+// Check for schema demo
+if (args.Length > 0 && args[0] == "schema-demo")
+{
+    Console.WriteLine("\n🎯 Running Schema Communication Demo...\n");
+    SchemaDemo.DemonstrateSchemas();
+    return 0;
+}
+
+// Check for schema test with real LLM
+if (args.Length > 0 && args[0] == "schema-test")
+{
+    Console.WriteLine("\n🧠 Testing Real Schema-Based LLM Communication...\n");
+    // We'll implement this after setting up the host
+}
 
 ILogger? logger = null;
 
@@ -87,52 +103,53 @@ try
 
     // Parse command line arguments
     string? query = null;
-    string? mode = null;
+    string? planning = null;
+    bool verbose = false;
 
     Console.WriteLine("📋 Parsing command line arguments...");
 
     for (int i = 0; i < args.Length; i++)
     {
         Console.WriteLine($"  Processing arg {i}: {args[i]}");
-        switch (args[i])
+        
+        if ((args[i] == "query" || args[i] == "--query") && i + 1 < args.Length)
         {
-            case "--mode":
-            case "-m":
-                if (i + 1 < args.Length)
-                {
-                    mode = args[i + 1];
-                    Console.WriteLine($"  Found mode: {mode}");
-                    i++; // Skip next argument since we consumed it
-                }
-                break;
-            case "--query":
-            case "-q":
-                if (i + 1 < args.Length)
-                {
-                    query = args[i + 1];
-                    Console.WriteLine($"  Found query: {query}");
-                    i++; // Skip next argument since we consumed it
-                }
-                break;
-            case "--help":
-            case "-h":
-                Console.WriteLine("Usage: Ollama.Interface.Cli [options]");
-                Console.WriteLine("Options:");
-                Console.WriteLine("  --mode, -m <mode>     Specify the mode (single, collaborative, intelligent)");
-                Console.WriteLine("  --query, -q <query>   Specify the query to process");
-                Console.WriteLine("  --help, -h            Show this help message");
-                return 0;
+            // The next argument is the actual query text
+            query = args[i + 1];
+            Console.WriteLine($"  Found query: {query}");
+            i++; // Skip next argument since we consumed it
+        }
+        else if (args[i] == "--planning" && i + 1 < args.Length)
+        {
+            planning = args[i + 1];
+            Console.WriteLine($"  Found planning: {planning}");
+            i++; // Skip next argument since we consumed it
+        }
+        else if (args[i] == "--verbose")
+        {
+            verbose = true;
+            Console.WriteLine($"  Found verbose flag");
+        }
+        else if (args[i] == "--help" || args[i] == "-h")
+        {
+            Console.WriteLine("Usage: Ollama.Interface.Cli [options]");
+            Console.WriteLine("Options:");
+            Console.WriteLine("  query <text>          The query to process");
+            Console.WriteLine("  --planning <type>     Specify the planning type (pessimistic)");
+            Console.WriteLine("  --verbose             Enable verbose output");
+            Console.WriteLine("  --help, -h            Show this help message");
+            return 0;
         }
     }
 
-    Console.WriteLine($"📋 Parsed arguments - Query: '{query}', Mode: '{mode}'");
+    Console.WriteLine($"📋 Parsed arguments - Query: '{query}', Planning: '{planning}', Verbose: {verbose}");
 
     // Use defaults if not provided
     query ??= "Hello world";
     var appSettings = app.Services.GetRequiredService<AppSettings>();
-    mode ??= appSettings.DefaultMode;
+    planning ??= "pessimistic";
 
-    Console.WriteLine($"📋 Final values - Query: '{query}', Mode: '{mode}'");
+    Console.WriteLine($"📋 Final values - Query: '{query}', Planning: '{planning}'");
 
     Console.WriteLine("🎯 Testing service resolution step by step...");
     
@@ -142,47 +159,58 @@ try
         // appSettings already resolved above, but let's test it again
         Console.WriteLine("  ✅ AppSettings resolved");
         
-        // Only test Python services if we're using intelligent mode
-        if (mode?.ToLowerInvariant() == "intelligent")
-        {
-            Console.WriteLine("  ➤ Getting IPythonSubsystemService...");
-            var pythonService = app.Services.GetRequiredService<IPythonSubsystemService>();
-            Console.WriteLine("  ✅ IPythonSubsystemService resolved");
-            
-            Console.WriteLine("  ➤ Starting Python subsystem in isolated process...");
-            var started = await pythonService.StartAsync();
-            if (!started)
-            {
-                Console.WriteLine("  ❌ Failed to start Python subsystem");
-                return 1;
-            }
-            Console.WriteLine("  ✅ Python subsystem started successfully");
-            
-            Console.WriteLine("  ➤ Getting IPythonLlmClient...");
-            var pythonClient = app.Services.GetRequiredService<IPythonLlmClient>();
-            Console.WriteLine("  ✅ IPythonLlmClient resolved");
-            
-            Console.WriteLine("  ➤ Getting IntelligentAgent...");
-            var intelligentAgent = app.Services.GetRequiredService<IntelligentAgent>();
-            Console.WriteLine("  ✅ IntelligentAgent resolved");
-        }
-        
         Console.WriteLine("  ➤ Getting IToolRepository...");
         var toolRepo = app.Services.GetRequiredService<IToolRepository>();
         Console.WriteLine("  ✅ IToolRepository resolved");
         
-        Console.WriteLine("  ➤ Getting StrategyOrchestrator...");
-        var orchestrator = app.Services.GetRequiredService<StrategyOrchestrator>();
-        Console.WriteLine("  ✅ StrategyOrchestrator resolved");
+        Console.WriteLine("  ➤ Getting StrategicAgent...");
+        var strategicAgent = app.Services.GetRequiredService<Ollama.Infrastructure.Agents.StrategicAgent>();
+        Console.WriteLine("  ✅ StrategicAgent resolved");
 
         Console.WriteLine($"🤖 OllamaAgentSuite - Processing query: '{query}'");
-        Console.WriteLine($"📋 Mode: {mode}");
+        Console.WriteLine($"📊 Planning: {planning}");
         
         Console.WriteLine("🔄 Executing query...");
-        var sessionId = orchestrator.ExecuteQuery(query, mode: mode);
-        Console.WriteLine($"📊 Session ID returned: {sessionId}");
         
-        var session = orchestrator.GetSession(sessionId);
+        // Always use StrategicAgent since we only have pessimistic strategy now
+        Console.WriteLine($"🧠 Using StrategicAgent with {planning} strategy...");
+        
+        var sessionId = Guid.NewGuid().ToString();
+        
+        Console.WriteLine($"🚀 Executing strategic query with session: {sessionId}");
+        
+        // Test schema-based communication if query contains "schema-test"
+        string response;
+        if (query.Contains("schema-test", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("📡 Using SCHEMA-BASED communication with real LLM...");
+            response = await strategicAgent.AnswerWithSchemaAsync(query.Replace("schema-test", "").Trim(), sessionId);
+        }
+        else
+        {
+            Console.WriteLine("📞 Using traditional communication...");
+            response = strategicAgent.Answer(query, sessionId);
+        }
+        
+        // Create session result manually
+        var session = new Dictionary<string, object>
+        {
+            ["sessionId"] = sessionId,
+            ["strategy"] = $"Strategic ({planning})",
+            ["response"] = response,
+            ["query"] = query,
+            ["timestamp"] = DateTime.UtcNow
+        };
+        
+        // Create session result manually
+        session = new Dictionary<string, object>
+        {
+            ["sessionId"] = sessionId,
+            ["strategy"] = $"Strategic ({planning})",
+            ["response"] = response,
+            ["query"] = query,
+            ["timestamp"] = DateTime.UtcNow
+        };
         
         if (session != null)
         {
@@ -219,24 +247,6 @@ try
         Console.WriteLine($"❌ Service resolution error: {serviceEx.Message}");
         Console.WriteLine($"❌ Service stack trace: {serviceEx.StackTrace}");
         throw;
-    }
-    finally
-    {
-        // Cleanup Python subsystem if it was started
-        if (mode?.ToLowerInvariant() == "intelligent")
-        {
-            try
-            {
-                Console.WriteLine("🧹 Cleaning up Python subsystem...");
-                var pythonService = app.Services.GetRequiredService<IPythonSubsystemService>();
-                await pythonService.StopAsync();
-                Console.WriteLine("✅ Python subsystem cleanup completed");
-            }
-            catch (Exception cleanupEx)
-            {
-                Console.WriteLine($"⚠️ Warning during cleanup: {cleanupEx.Message}");
-            }
-        }
     }
 }
 catch (Exception ex)

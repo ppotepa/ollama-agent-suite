@@ -1,0 +1,24 @@
+Raw LLM Response: {
+  "reasoning": "The user query is 'Hello world', which does not require any specific action or analysis. However, we need to break down the process into smallest possible verified steps.",
+  "taskComplete": false,
+  "nextStep": "Determine if a repository URL is required for further processing",
+  "requiresTool": false,
+  "tool": null,
+  "parameters": {},
+  "confidence": 0.0,
+  "assumptions": ["The user's query may require access to a specific repository or file"],
+  "risks": [],
+  "response": ""
+}
+Validated Response: {
+  "reasoning": "The user query is 'Hello world', which does not require any specific action or analysis. However, we need to break down the process into smallest possible verified steps.",
+  "taskComplete": false,
+  "nextStep": "Determine if a repository URL is required for further processing",
+  "requiresTool": false,
+  "tool": null,
+  "parameters": {},
+  "confidence": 0.0,
+  "assumptions": ["The user's query may require access to a specific repository or file"],
+  "risks": [],
+  "response": ""
+}

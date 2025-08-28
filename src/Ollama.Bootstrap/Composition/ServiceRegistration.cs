@@ -20,113 +20,60 @@ public static class ServiceRegistration
 {
     public static IServiceCollection AddOllamaServices(this IServiceCollection services)
     {
-        // Register Python subsystem services
-        services.AddSingleton<IPythonSubsystemService, PythonSubsystemService>();
-        services.AddHttpClient<IPythonLlmClient, PythonLlmClient>(client => {
-            client.BaseAddress = new Uri("http://localhost:8000");
-            client.Timeout = TimeSpan.FromSeconds(30);
-        });
-
-        // Register planning services
-        services.AddSingleton<IModelRegistryService, ModelRegistryService>();
-        services.AddSingleton<IPlanningService, PlanningService>();
-
-        // Register domain services
+        // Register domain services (minimal set for strategic agent)
         services.AddSingleton<ExecutionTreeBuilder>();
         services.AddSingleton<CollaborationContextService>();
         services.AddSingleton<AgentSwitchService>();
+        services.AddSingleton<ILLMCommunicationService, LLMCommunicationService>();
 
         // Register HTTP client for tools
         services.AddHttpClient();
+        
+        // Register Ollama settings and client
+        services.AddSingleton<OllamaSettings>(provider => new OllamaSettings());
+        services.AddHttpClient<BuiltInOllamaClient>();
         
         // Register tool repository and tools
         services.AddTransient<MathEvaluator>();
         services.AddTransient<GitHubRepositoryDownloader>();
         services.AddTransient<FileSystemAnalyzer>();
         services.AddTransient<CodeAnalyzer>();
+        services.AddTransient<ExternalCommandExecutor>();
+        services.AddTransient<ExternalCommandDetector>();
         
         // Configure tool repository with tools using a factory
         services.AddSingleton<IToolRepository>(serviceProvider =>
         {
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             var logger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ToolRepository>>();
+            var gitHubDownloaderLogger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GitHubRepositoryDownloader>>();
             
             var toolRepository = new ToolRepository(logger);
             
             // Register all tools
             toolRepository.RegisterTool(new MathEvaluator());
-            toolRepository.RegisterTool(new GitHubRepositoryDownloader(httpClientFactory.CreateClient()));
+            toolRepository.RegisterTool(new GitHubRepositoryDownloader(httpClientFactory.CreateClient(), gitHubDownloaderLogger));
             toolRepository.RegisterTool(new FileSystemAnalyzer());
             toolRepository.RegisterTool(new CodeAnalyzer());
+            toolRepository.RegisterTool(new ExternalCommandExecutor());
             
             return toolRepository;
         });
 
-        // Register intelligent agent with explicit factory
-        services.AddSingleton<IntelligentAgent>(provider =>
+        // Register strategic agent and its dependencies
+        services.AddSingleton<ISessionFileSystem, Ollama.Infrastructure.Services.SessionFileSystem>();
+        services.AddSingleton<IAgentStrategy, Ollama.Infrastructure.Strategies.PessimisticAgentStrategy>();
+        services.AddSingleton<Ollama.Infrastructure.Agents.StrategicAgent>(provider =>
         {
+            var strategy = provider.GetRequiredService<IAgentStrategy>();
+            var sessionFileSystem = provider.GetRequiredService<ISessionFileSystem>();
             var toolRepository = provider.GetRequiredService<IToolRepository>();
-            var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<IntelligentAgent>>();
-            var pythonService = provider.GetRequiredService<IPythonSubsystemService>();
-            var pythonClient = provider.GetRequiredService<IPythonLlmClient>();
-            var planningService = provider.GetRequiredService<IPlanningService>();
+            var ollamaClient = provider.GetRequiredService<BuiltInOllamaClient>();
+            var communicationService = provider.GetRequiredService<ILLMCommunicationService>();
+            var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ollama.Infrastructure.Agents.StrategicAgent>>();
             
-            return new IntelligentAgent(toolRepository, logger, pythonService, pythonClient, planningService);
+            return new Ollama.Infrastructure.Agents.StrategicAgent(strategy, sessionFileSystem, toolRepository, ollamaClient, communicationService, logger);
         });
-
-        // Register agents
-        services.AddSingleton<IAgent>(provider => new UniversalAgentAdapter("llama2"));
-        services.AddSingleton<IAgent>(provider => new UniversalAgentAdapter("codellama"));
-
-        // Factory for creating specific agents by role
-        services.AddSingleton<Func<string, IAgent>>(provider => role =>
-        {
-            return role.ToLowerInvariant() switch
-            {
-                "thinker" => new UniversalAgentAdapter("llama2"),
-                "coder" => new UniversalAgentAdapter("codellama"),
-                _ => new UniversalAgentAdapter("llama2")
-            };
-        });
-
-        // Register strategies
-        services.AddSingleton<IModeStrategy>(provider =>
-        {
-            var agentFactory = provider.GetRequiredService<Func<string, IAgent>>();
-            return new SingleQueryMode(agentFactory("default"));
-        });
-
-        services.AddSingleton<IModeStrategy>(provider =>
-        {
-            var agentFactory = provider.GetRequiredService<Func<string, IAgent>>();
-            var contextService = provider.GetRequiredService<CollaborationContextService>();
-            return new CollaborativeMode(
-                agentFactory("thinker"), 
-                agentFactory("coder"), 
-                contextService);
-        });
-
-        services.AddSingleton<IModeStrategy>(provider =>
-        {
-            var intelligentAgent = provider.GetRequiredService<IntelligentAgent>();
-            var agentSwitchService = provider.GetRequiredService<AgentSwitchService>();
-            var treeBuilder = provider.GetRequiredService<ExecutionTreeBuilder>();
-            
-            return new IntelligentMode(
-                intelligentAgent, 
-                agentSwitchService, 
-                treeBuilder);
-        });
-
-        // Register mode registry
-        services.AddSingleton<ModeRegistry>(provider =>
-        {
-            var strategies = provider.GetServices<IModeStrategy>();
-            return new ModeRegistry(strategies);
-        });
-
-        // Register orchestrator
-        services.AddSingleton<StrategyOrchestrator>();
 
         return services;
     }

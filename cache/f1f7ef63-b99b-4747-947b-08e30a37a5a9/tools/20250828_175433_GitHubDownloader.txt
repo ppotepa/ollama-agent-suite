@@ -1,0 +1,3 @@
+Tool: GitHubDownloader
+Parameters: repoUrl=https://github.com/ppotepa/ClickBytez.EF.Gateway
+Response: Tool GitHubDownloader failed: Failed to download repository: Response status code does not indicate success: 403 (Forbidden).

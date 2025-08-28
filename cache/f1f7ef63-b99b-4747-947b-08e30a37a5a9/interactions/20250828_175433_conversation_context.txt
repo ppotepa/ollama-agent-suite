@@ -1,0 +1,100 @@
+Full Conversation Context sent to LLM:
+SYSTEM:
+You are a helpful AI agent with a systematic approach to problem-solving.
+
+IMPORTANT: You must respond in JSON format only. No other text outside the JSON object.
+
+Your response must be a valid JSON object with this exact structure:
+{
+  "reasoning": "Your detailed step-by-step reasoning process",
+  "taskComplete": false,
+  "nextStep": "Specific action to take next",
+  "requiresTool": false,
+  "tool": null,
+  "parameters": {},
+  "confidence": 0.0,
+  "assumptions": [],
+  "risks": [],
+  "response": "Your response to the user"
+}
+
+KEY PRINCIPLES:
+1. Always respond with valid JSON only
+2. Take direct, actionable steps
+3. When tools fail, try different approaches  
+4. Break complex tasks into concrete steps
+5. Provide specific, executable actions
+
+ACTION REQUIREMENTS:
+The 'nextStep' field should contain direct actions like:
+- "Use GitHubDownloader tool to download repository https://github.com/user/repo"
+- "Use FileSystemAnalyzer tool to analyze directory ./downloads/repo"
+- "Use CodeAnalyzer tool to read file ./downloads/repo/Program.cs"
+- "Use MathEvaluator tool to calculate expression: 15 * 8 + 42"
+
+TOOL PARAMETERS:
+GitHubDownloader: "repoUrl", "sessionId"
+FileSystemAnalyzer: "directoryPath", "includeSubdirectories", "minimumFileSize"
+CodeAnalyzer: "filePath", "analysisType"
+MathEvaluator: "expression"
+
+COMPLETION CRITERIA:
+Only set taskComplete to true when you have fully answered the user's question with verified results.
+
+Remember: Respond only with valid JSON. No additional text.
+---
+USER:
+Process the following request with maximum caution and verification (Session: f1f7ef63-b99b-4747-947b-08e30a37a5a9):
+
+User Query: download and analyze https://github.com/ppotepa/ClickBytez.EF.Gateway also tell me what are the biggest files in this repository and what they are responsible for
+
+CRITICAL REQUIREMENTS:
+1. Respond only in JSON format
+2. Break this down into the smallest possible verified steps
+3. Your 'nextStep' must be a SPECIFIC EXECUTABLE ACTION, not a description
+4. If you need to download a repository, use GitHubDownloader tool
+5. If you need to analyze file sizes, use FileSystemAnalyzer tool  
+6. If you need to read code content, use CodeAnalyzer tool
+7. Consider what could go wrong at each step
+8. Use tools when you need to verify information
+9. Never assume anything works without verification
+
+FIRST STEP GUIDANCE:
+- For repository analysis: Start with "Use GitHubDownloader tool to download the repository from [URL]"
+- For file analysis: Start with "Use FileSystemAnalyzer tool to analyze the downloaded repository structure"
+- For code reading: Start with "Use CodeAnalyzer tool to read and analyze [specific file]"
+
+Make your nextStep immediately actionable!
+---
+ASSISTANT:
+{
+  "reasoning": "To process the user's request, we need to break it down into smaller steps. First, we need to download the repository using GitHubDownloader.",
+  "taskComplete": false,
+  "nextStep": "Use GitHubDownloader tool to download the repository from https://github.com/ppotepa/ClickBytez.EF.Gateway",
+  "requiresTool": true,
+  "tool": "GitHubDownloader",
+  "parameters": {
+    "repoUrl": "https://github.com/ppotepa/ClickBytez.EF.Gateway"
+  },
+  "confidence": 0.9,
+  "assumptions": [],
+  "risks": [
+    "GitHubDownloader might fail to download the repository due to network issues or GitHub restrictions."
+  ],
+  "response": ""
+}
+---
+USER:
+Tool 'GitHubDownloader' execution completed. 
+
+TOOL RESULT:
+Tool GitHubDownloader failed: Failed to download repository: Response status code does not indicate success: 403 (Forbidden).
+
+Now analyze this result carefully:
+1. Does this result answer the user's question?
+2. Are there any errors or inconsistencies in the result?
+3. Do you need additional tools to verify this information?
+4. What are the implications of this result?
+5. Are there any edge cases or risks to consider?
+
+Continue processing with extreme caution. Verify everything before drawing conclusions.

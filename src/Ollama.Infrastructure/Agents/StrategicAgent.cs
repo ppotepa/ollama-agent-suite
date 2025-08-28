@@ -1,0 +1,985 @@
+using Ollama.Domain.Agents;
+using Ollama.Domain.Strategies;
+using Ollama.Domain.Services;
+using Ollama.Domain.Tools;
+using Ollama.Domain.Models.Communication;
+using Ollama.Infrastructure.Strategies;
+using Ollama.Infrastructure.Clients;
+using Ollama.Infrastructure.Tools;
+using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
+using System.Text.Json;
+
+namespace Ollama.Infrastructure.Agents;
+
+/// <summary>
+/// Strategic agent that operates based on a configurable strategy
+/// Integrates with session file system for isolated execution environments
+/// </summary>
+public class StrategicAgent : IAgent
+{
+    private readonly IAgentStrategy _strategy;
+    private readonly ISessionFileSystem _sessionFileSystem;
+    private readonly IToolRepository _toolRepository;
+    private readonly BuiltInOllamaClient _ollamaClient;
+    private readonly ILLMCommunicationService _communicationService;
+    private readonly ILogger<StrategicAgent> _logger;
+    private readonly string _model;
+    private readonly ConcurrentDictionary<string, List<(string role, string content)>> _conversations = new();
+    private readonly Dictionary<string, string> _availableCommands = new();
+    private readonly ExternalCommandDetector _commandDetector;
+
+    public StrategicAgent(
+        IAgentStrategy strategy,
+        ISessionFileSystem sessionFileSystem,
+        IToolRepository toolRepository,
+        BuiltInOllamaClient ollamaClient,
+        ILLMCommunicationService communicationService,
+        ILogger<StrategicAgent> logger,
+        string model = "llama3.1:8b")
+    {
+        _strategy = strategy;
+        _sessionFileSystem = sessionFileSystem;
+        _toolRepository = toolRepository;
+        _ollamaClient = ollamaClient;
+        _communicationService = communicationService;
+        _logger = logger;
+        _model = model;
+        
+        // Initialize external command detector with a simple logger
+        _commandDetector = new ExternalCommandDetector();
+        
+        // Detect available commands on startup (fire and forget - don't block)
+        Task.Run(async () =>
+        {
+            try
+            {
+                var commands = await _commandDetector.DetectAvailableCommandsAsync();
+                lock (_availableCommands)
+                {
+                    _availableCommands.Clear();
+                    foreach (var cmd in commands)
+                    {
+                        _availableCommands[cmd.Key] = cmd.Value;
+                    }
+                }
+                _logger.LogInformation("External command detection completed. Found {Count} commands", commands.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to detect external commands");
+            }
+        });
+    }
+
+    public string Answer(string prompt, string? sessionId = null)
+    {
+        return AnswerAsync(prompt, sessionId).GetAwaiter().GetResult();
+    }
+
+    public async Task<string> AnswerAsync(string prompt, string? sessionId = null)
+    {
+        try
+        {
+            // Ensure we have a session ID
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                sessionId = Guid.NewGuid().ToString();
+                _logger.LogDebug("Created new session ID for Answer: {SessionId}", sessionId);
+            }
+
+            // Initialize session file system
+            var sessionRoot = _sessionFileSystem.GetSessionRoot(sessionId);
+            var currentDir = _sessionFileSystem.GetCurrentDirectory(sessionId);
+            
+            _logger.LogInformation("Session {SessionId}: Starting with strategy {Strategy} in directory {Directory}", 
+                sessionId, _strategy.Name, currentDir);
+
+            // Initialize conversation if needed
+            if (!_conversations.ContainsKey(sessionId))
+            {
+                var initialPrompt = _strategy.GetInitialPrompt();
+                _conversations[sessionId] = new List<(string role, string content)>
+                {
+                    ("system", initialPrompt)
+                };
+                
+                // Log the initial system prompt for debugging and transparency
+                _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_initial_system_prompt.txt", 
+                    $"Initial System Prompt from {_strategy.Name} strategy:\n{initialPrompt}\n");
+                
+                _logger.LogDebug("Session {SessionId}: Initialized conversation with strategy prompt", sessionId);
+                _logger.LogDebug("Session {SessionId}: Initial system prompt length: {Length}", sessionId, initialPrompt.Length);
+            }
+
+            // Create a session context file to track this interaction
+            _sessionFileSystem.WriteFile(sessionId, "session_context.json", CreateSessionContext(sessionId, prompt));
+
+            // Format user query according to strategy
+            var formattedPrompt = _strategy.FormatQueryPrompt(prompt, sessionId);
+            _conversations[sessionId].Add(("user", formattedPrompt));
+
+            // Log the interaction
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_query.txt", 
+                $"User Query: {prompt}\nFormatted Prompt: {formattedPrompt}\n");
+
+            // Call actual LLM using BuiltInOllamaClient
+            var llmResponse = await CallLLMAsync(formattedPrompt, sessionId);
+            _conversations[sessionId].Add(("assistant", llmResponse));
+
+            // Validate response according to strategy
+            var validatedResponse = _strategy.ValidateResponse(llmResponse, sessionId);
+            
+            // Log the response
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_response.txt", 
+                $"Raw LLM Response: {llmResponse}\nValidated Response: {validatedResponse}\n");
+
+            // Check if we need to use any tools
+            var toolRequest = _strategy.ExtractToolRequest(validatedResponse);
+            if (toolRequest.HasValue)
+            {
+                var (toolName, parameters) = toolRequest.Value;
+                _logger.LogInformation("Session {SessionId}: Tool requested: {Tool} with parameters: {Parameters}", 
+                    sessionId, toolName, string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}")));
+
+                // Execute the tool within the session context
+                var toolResponse = ExecuteTool(toolName, parameters, sessionId);
+                
+                // Format tool response for LLM
+                var formattedToolResponse = _strategy.FormatToolResponse(toolName, toolResponse);
+                _conversations[sessionId].Add(("user", formattedToolResponse));
+                
+                // Log tool execution
+                _sessionFileSystem.WriteFile(sessionId, $"tools/{DateTime.UtcNow:yyyyMMdd_HHmmss}_{toolName}.txt", 
+                    $"Tool: {toolName}\nParameters: {string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}"))}\nResponse: {toolResponse}\n");
+                
+                // Continue conversation - get next response after tool execution
+                var continuationResponse = ContinueConversation(sessionId, toolResponse);
+                validatedResponse = continuationResponse;
+            }
+
+            // Save conversation state
+            SaveConversationState(sessionId);
+
+            // Check if task is complete
+            var isComplete = _strategy.IsTaskComplete(validatedResponse);
+            _logger.LogInformation("Session {SessionId}: Task complete: {IsComplete}", sessionId, isComplete);
+
+            if (!isComplete)
+            {
+                var nextStep = _strategy.GetNextStep(validatedResponse);
+                _logger.LogInformation("Session {SessionId}: Next step: {NextStep}", sessionId, nextStep);
+                
+                _sessionFileSystem.WriteFile(sessionId, "next_steps.txt", 
+                    $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}: {nextStep}\n");
+            }
+
+            return validatedResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Error in Answer method", sessionId);
+            return _strategy.HandleError(ex.Message, "Answer");
+        }
+    }
+
+    public string Think(string prompt)
+    {
+        return Think(prompt, null);
+    }
+
+    public string Think(string prompt, string? sessionId)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                sessionId = Guid.NewGuid().ToString();
+            }
+
+            _logger.LogInformation("Session {SessionId}: Thinking about: {Prompt}", sessionId, prompt);
+            
+            // Create thinking session directory
+            _sessionFileSystem.CreateDirectory(sessionId, "thinking");
+            
+            // Format thinking prompt
+            var thinkingPrompt = $"Think step by step about this problem using the {_strategy.Name} approach: {prompt}";
+            
+            // Log thinking process
+            _sessionFileSystem.WriteFile(sessionId, $"thinking/{DateTime.UtcNow:yyyyMMdd_HHmmss}_thought.txt", 
+                $"Thinking Prompt: {thinkingPrompt}\n");
+            
+            // TODO: Process thinking without storing in main conversation history
+            var thinkingResponse = SimulateThinking(thinkingPrompt, sessionId);
+            
+            _sessionFileSystem.WriteFile(sessionId, $"thinking/{DateTime.UtcNow:yyyyMMdd_HHmmss}_result.txt", 
+                $"Thinking Result: {thinkingResponse}\n");
+            
+            return thinkingResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Error in Think method", sessionId);
+            return _strategy.HandleError(ex.Message, "Think");
+        }
+    }
+
+    public object Plan(string prompt)
+    {
+        return Plan(prompt, null);
+    }
+
+    public object Plan(string prompt, string? sessionId)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                sessionId = Guid.NewGuid().ToString();
+            }
+
+            _logger.LogInformation("Session {SessionId}: Planning for: {Prompt}", sessionId, prompt);
+            
+            // Create planning session directory
+            _sessionFileSystem.CreateDirectory(sessionId, "plans");
+            
+            // Format planning prompt
+            var planningPrompt = $"Create a detailed step-by-step plan using the {_strategy.Name} approach for: {prompt}";
+            
+            // TODO: Process planning
+            var planningResponse = SimulatePlanning(planningPrompt, sessionId);
+            
+            // Save plan
+            var planFile = $"plans/{DateTime.UtcNow:yyyyMMdd_HHmmss}_plan.json";
+            _sessionFileSystem.WriteFile(sessionId, planFile, planningResponse);
+            
+            return new
+            {
+                SessionId = sessionId,
+                Strategy = _strategy.Name,
+                Plan = planningResponse,
+                PlanFile = planFile,
+                CreatedAt = DateTime.UtcNow
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Error in Plan method", sessionId);
+            return new
+            {
+                Error = _strategy.HandleError(ex.Message, "Plan"),
+                CreatedAt = DateTime.UtcNow
+            };
+        }
+    }
+
+    public object Act(string instruction)
+    {
+        try
+        {
+            var sessionId = Guid.NewGuid().ToString();
+            
+            _logger.LogInformation("Session {SessionId}: Acting on: {Instruction}", sessionId, instruction);
+            
+            // Create action session directory
+            _sessionFileSystem.CreateDirectory(sessionId, "actions");
+            
+            // Format action prompt
+            var actionPrompt = $"Execute this instruction using the {_strategy.Name} approach: {instruction}";
+            
+            // TODO: Process action
+            var actionResponse = SimulateAction(actionPrompt, sessionId);
+            
+            // Save action result
+            var actionFile = $"actions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_action.json";
+            _sessionFileSystem.WriteFile(sessionId, actionFile, actionResponse);
+            
+            return new
+            {
+                SessionId = sessionId,
+                Strategy = _strategy.Name,
+                Result = actionResponse,
+                ActionFile = actionFile,
+                ExecutedAt = DateTime.UtcNow
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in Act method: {Error}", ex.Message);
+            return new
+            {
+                Error = _strategy.HandleError(ex.Message, "Act"),
+                ExecutedAt = DateTime.UtcNow
+            };
+        }
+    }
+
+    // Private helper methods
+
+    private string CreateSessionContext(string sessionId, string prompt)
+    {
+        var context = new
+        {
+            SessionId = sessionId,
+            Strategy = _strategy.Name,
+            InitialPrompt = prompt,
+            SessionRoot = _sessionFileSystem.GetSessionRoot(sessionId),
+            CurrentDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId),
+            CreatedAt = DateTime.UtcNow
+        };
+        
+        return System.Text.Json.JsonSerializer.Serialize(context, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private void SaveConversationState(string sessionId)
+    {
+        try
+        {
+            if (_conversations.TryGetValue(sessionId, out var conversation))
+            {
+                var conversationJson = System.Text.Json.JsonSerializer.Serialize(conversation, 
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                
+                _sessionFileSystem.WriteFile(sessionId, "conversation_history.json", conversationJson);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Failed to save conversation state", sessionId);
+        }
+    }
+
+    private string ExecuteTool(string toolName, Dictionary<string, string> parameters, string sessionId)
+    {
+        const int maxRetries = 10;
+        var retryCount = 0;
+        
+        while (retryCount < maxRetries)
+        {
+            try
+            {
+                _logger.LogInformation("Session {SessionId}: Executing tool {Tool} (attempt {Retry}/{MaxRetries})", 
+                    sessionId, toolName, retryCount + 1, maxRetries);
+                
+                // Get the tool from the repository
+                var tool = _toolRepository.GetToolByName(toolName);
+                if (tool == null)
+                {
+                    var errorMessage = $"Tool '{toolName}' not found in repository";
+                    _logger.LogError("Session {SessionId}: {Error}", sessionId, errorMessage);
+                    return errorMessage;
+                }
+
+                // Create execution context for the tool
+                var context = new ToolContext
+                {
+                    WorkingDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId)
+                };
+
+                // Add parameters to context
+                foreach (var param in parameters)
+                {
+                    context.Parameters[param.Key] = param.Value;
+                }
+
+                // Execute the tool (async to sync for now)
+                var task = tool.RunAsync(context);
+                task.Wait(); // TODO: Make this async properly
+                var result = task.Result;
+                
+                if (result.Success)
+                {
+                    _logger.LogInformation("Session {SessionId}: Tool {Tool} executed successfully on attempt {Retry}", 
+                        sessionId, toolName, retryCount + 1);
+                    return result.Output?.ToString() ?? "Tool executed successfully";
+                }
+                else
+                {
+                    var errorMessage = $"Tool {toolName} failed: {result.ErrorMessage}";
+                    _logger.LogWarning("Session {SessionId}: {Error} (attempt {Retry}/{MaxRetries})", 
+                        sessionId, errorMessage, retryCount + 1, maxRetries);
+                    
+                    // Try alternative approach
+                    var alternativeResult = TryAlternativeApproach(toolName, parameters, sessionId, retryCount);
+                    if (alternativeResult != null)
+                    {
+                        return alternativeResult;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = $"Error executing tool {toolName}: {ex.Message}";
+                _logger.LogError(ex, "Session {SessionId}: {Error} (attempt {Retry}/{MaxRetries})", 
+                    sessionId, errorMessage, retryCount + 1, maxRetries);
+                
+                // Try alternative approach
+                var alternativeResult = TryAlternativeApproach(toolName, parameters, sessionId, retryCount);
+                if (alternativeResult != null)
+                {
+                    return alternativeResult;
+                }
+            }
+            
+            retryCount++;
+        }
+        
+        return $"Tool {toolName} failed after {maxRetries} attempts. All alternative approaches exhausted.";
+    }
+
+    private string? TryAlternativeApproach(string originalTool, Dictionary<string, string> parameters, string sessionId, int retryAttempt)
+    {
+        try
+        {
+            // GitHubDownloader alternatives
+            if (originalTool.Equals("GitHubDownloader", StringComparison.OrdinalIgnoreCase))
+            {
+                if (parameters.TryGetValue("url", out var repoUrl) || parameters.TryGetValue("repoUrl", out repoUrl))
+                {
+                    var alternativeCommands = GetGitHubAlternatives(repoUrl, retryAttempt);
+                    foreach (var command in alternativeCommands)
+                    {
+                        var result = ExecuteExternalCommand(command, sessionId);
+                        if (result.Contains("successfully") || !result.Contains("failed"))
+                        {
+                            _logger.LogInformation("Session {SessionId}: Alternative command succeeded: {Command}", sessionId, command);
+                            return result;
+                        }
+                        _logger.LogWarning("Session {SessionId}: Alternative command failed: {Command}", sessionId, command);
+                    }
+                }
+            }
+            
+            // Other tool alternatives can be added here
+            // FileSystemAnalyzer alternatives, CodeAnalyzer alternatives, etc.
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Error in alternative approach for {Tool}", sessionId, originalTool);
+            return null;
+        }
+    }
+
+    private IEnumerable<string> GetGitHubAlternatives(string repoUrl, int retryAttempt)
+    {
+        var alternatives = new List<string>();
+        
+        // Extract repo info for different download methods
+        var repoName = ExtractRepoName(repoUrl);
+        var archiveUrl = repoUrl.Replace("github.com", "github.com") + "/archive/refs/heads/main.zip";
+        
+        switch (retryAttempt % 4)
+        {
+            case 0:
+                if (_availableCommands.ContainsKey("git"))
+                    alternatives.Add($"git clone {repoUrl}");
+                break;
+            case 1:
+                if (_availableCommands.ContainsKey("powershell"))
+                    alternatives.Add($"powershell -Command \"Invoke-WebRequest '{archiveUrl}' -OutFile '{repoName}.zip'\"");
+                break;
+            case 2:
+                if (_availableCommands.ContainsKey("curl"))
+                    alternatives.Add($"curl -L '{archiveUrl}' -o '{repoName}.zip'");
+                break;
+            case 3:
+                if (_availableCommands.ContainsKey("wget"))
+                    alternatives.Add($"wget '{archiveUrl}' -O '{repoName}.zip'");
+                break;
+        }
+        
+        return alternatives;
+    }
+
+    private string ExtractRepoName(string repoUrl)
+    {
+        try
+        {
+            var uri = new Uri(repoUrl);
+            var path = uri.AbsolutePath.TrimStart('/').TrimEnd('/');
+            return path.Split('/').LastOrDefault()?.Replace(".git", "") ?? "repository";
+        }
+        catch
+        {
+            return "repository";
+        }
+    }
+
+    private string ExecuteExternalCommand(string command, string sessionId)
+    {
+        try
+        {
+            var externalExecutor = _toolRepository.GetToolByName("ExternalCommandExecutor");
+            if (externalExecutor == null)
+            {
+                return "ExternalCommandExecutor not available";
+            }
+
+            var context = new ToolContext
+            {
+                WorkingDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId)
+            };
+            context.Parameters["command"] = command;
+            context.Parameters["timeoutSeconds"] = "60";
+
+            var task = externalExecutor.RunAsync(context);
+            task.Wait();
+            var result = task.Result;
+
+            if (result.Success)
+            {
+                return $"External command succeeded: {result.Output}";
+            }
+            else
+            {
+                return $"External command failed: {result.ErrorMessage}";
+            }
+        }
+        catch (Exception ex)
+        {
+            return $"Error executing external command: {ex.Message}";
+        }
+    }
+
+    private async Task<string> CallLLMAsync(string prompt, string sessionId)
+    {
+        try
+        {
+            // Get the conversation history for this session
+            var conversation = _conversations[sessionId];
+            
+            // Log the full conversation context being sent to LLM
+            var conversationLog = string.Join("\n---\n", conversation.Select(msg => $"{msg.role.ToUpper()}:\n{msg.content}"));
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_conversation_context.txt", 
+                $"Full Conversation Context sent to LLM:\n{conversationLog}\n");
+            
+            _logger.LogInformation("Session {SessionId}: Calling LLM with model {Model}", sessionId, _model);
+            _logger.LogDebug("Session {SessionId}: Sending {MessageCount} messages to LLM", sessionId, conversation.Count);
+            
+            // Call the Ollama API with the full conversation history
+            var response = await _ollamaClient.ChatAsync(_model, conversation);
+            
+            _logger.LogInformation("Session {SessionId}: Received LLM response ({Length} chars)", 
+                sessionId, response.Length);
+            
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Error calling LLM", sessionId);
+            
+            // Fallback to simulation in case of error
+            _logger.LogWarning("Session {SessionId}: Falling back to simulation due to LLM error", sessionId);
+            return SimulateLLMResponse(prompt, sessionId);
+        }
+    }
+
+    private string SimulateLLMResponse(string prompt, string sessionId)
+    {
+        // TODO: Replace with actual LLM client integration
+        // This is a simulation for demonstration purposes
+        
+        if (_strategy is PessimisticAgentStrategy)
+        {
+            // Detect if this is a tool completion message
+            if (prompt.ToLowerInvariant().Contains("tool execution completed"))
+            {
+                return @"{
+  ""reasoning"": ""The tool has been executed successfully. I can see from the results that the repository has been downloaded. Now I need to analyze its structure to find the biggest files."",
+  ""taskComplete"": false,
+  ""nextStep"": ""Use FileSystemAnalyzer tool to analyze the downloaded repository and find the biggest files"",
+  ""requiresTool"": true,
+  ""tool"": ""FileSystemAnalyzer"",
+  ""parameters"": {
+    ""path"": ""./downloaded_repo"",
+    ""operation"": ""find_largest_files"",
+    ""count"": ""10""
+  },
+  ""confidence"": 0.8,
+  ""assumptions"": [""Repository was downloaded successfully"", ""Repository contains multiple files""],
+  ""risks"": [""Download may have failed"", ""Repository might be empty""],
+  ""response"": ""Great! I've successfully downloaded the repository. Now I'll analyze its structure to find the biggest files.""
+}";
+            }
+            
+            // Detect if this is a GitHub repository analysis request
+            if (prompt.ToLowerInvariant().Contains("github.com") && prompt.ToLowerInvariant().Contains("download"))
+            {
+                var githubUrl = ExtractGitHubUrl(prompt);
+                return @"{
+  ""reasoning"": ""The user wants me to download and analyze a GitHub repository. I need to start by downloading the repository first before I can analyze it. This is a complex task that requires multiple steps."",
+  ""taskComplete"": false,
+  ""nextStep"": ""Use GitHubDownloader tool to download the repository from " + githubUrl + @""",
+  ""requiresTool"": true,
+  ""tool"": ""GitHubDownloader"",
+  ""parameters"": {
+    ""url"": """ + githubUrl + @""",
+    ""destination"": ""./downloaded_repo""
+  },
+  ""confidence"": 0.8,
+  ""assumptions"": [""GitHub repository is publicly accessible"", ""Repository contains analyzable code files""],
+  ""risks"": [""Repository might be private"", ""Network connection issues"", ""Large repository size""],
+  ""response"": ""I'll start by downloading the GitHub repository so I can analyze its structure and contents.""
+}";
+            }
+            
+            // Default response for other queries
+            return @"{
+  ""reasoning"": ""This appears to be a user query that needs careful analysis. I should break this down into smaller steps to ensure accuracy."",
+  ""taskComplete"": false,
+  ""nextStep"": ""Analyze the user's requirements and determine if additional information or tools are needed"",
+  ""requiresTool"": false,
+  ""tool"": null,
+  ""parameters"": {},
+  ""confidence"": 0.6,
+  ""assumptions"": [""User expects a thorough response"", ""Question may have multiple parts""],
+  ""risks"": [""Misunderstanding user intent"", ""Incomplete analysis""],
+  ""response"": ""I'm analyzing your request carefully. Let me break this down systematically to ensure I provide an accurate and complete response.""
+}";
+        }
+        
+        return "I'm processing your request systematically to ensure accuracy.";
+    }
+
+    private string ExtractGitHubUrl(string prompt)
+    {
+        // Simple regex to extract GitHub URL from the prompt
+        var match = System.Text.RegularExpressions.Regex.Match(prompt, @"https://github\.com/[^\s,]+");
+        return match.Success ? match.Value : "https://github.com/user/repo";
+    }
+
+    private string ContinueConversation(string sessionId, string toolResponse)
+    {
+        try
+        {
+            // Create a message about what was accomplished
+            var accomplishmentMessage = $"Tool execution completed. Result: {toolResponse}. What should I do next?";
+            
+            // Get the next response from actual LLM
+            var nextResponse = CallLLMAsync(accomplishmentMessage, sessionId).GetAwaiter().GetResult();
+            _conversations[sessionId].Add(("assistant", nextResponse));
+            
+            // Log the continuation
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_continuation.txt", 
+                $"Tool Response: {toolResponse}\nNext LLM Response: {nextResponse}\n");
+            
+            return _strategy.ValidateResponse(nextResponse, sessionId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Error in conversation continuation", sessionId);
+            return _strategy.HandleError(ex.Message, "ContinueConversation");
+        }
+    }
+
+    private string SimulateThinking(string prompt, string sessionId)
+    {
+        // TODO: Replace with actual LLM client integration
+        return $"Thinking about: {prompt} using {_strategy.Name} strategy in session {sessionId}";
+    }
+
+    private string SimulatePlanning(string prompt, string sessionId)
+    {
+        // TODO: Replace with actual LLM client integration
+        var plan = new
+        {
+            Strategy = _strategy.Name,
+            SessionId = sessionId,
+            Steps = new[]
+            {
+                "1. Analyze requirements thoroughly",
+                "2. Identify potential risks and assumptions",
+                "3. Break down into smaller verifiable steps",
+                "4. Execute each step with validation",
+                "5. Verify final results before completion"
+            },
+            Prompt = prompt,
+            CreatedAt = DateTime.UtcNow
+        };
+        
+        return System.Text.Json.JsonSerializer.Serialize(plan, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private string SimulateAction(string instruction, string sessionId)
+    {
+        // TODO: Replace with actual LLM client integration
+        var action = new
+        {
+            Strategy = _strategy.Name,
+            SessionId = sessionId,
+            Instruction = instruction,
+            Status = "Executed",
+            Result = $"Action completed using {_strategy.Name} strategy",
+            ExecutedAt = DateTime.UtcNow
+        };
+        
+        return System.Text.Json.JsonSerializer.Serialize(action, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    }
+
+    /// <summary>
+    /// New schema-based communication method
+    /// </summary>
+    public async Task<string> AnswerWithSchemaAsync(string prompt, string? sessionId = null)
+    {
+        try
+        {
+            // Ensure we have a session ID
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                sessionId = Guid.NewGuid().ToString();
+                _logger.LogDebug("Created new session ID for schema-based Answer: {SessionId}", sessionId);
+            }
+
+            // Initialize session file system
+            var sessionRoot = _sessionFileSystem.GetSessionRoot(sessionId);
+            var currentDir = _sessionFileSystem.GetCurrentDirectory(sessionId);
+            
+            _logger.LogInformation("Session {SessionId}: Starting schema-based interaction with strategy {Strategy} in directory {Directory}", 
+                sessionId, _strategy.Name, currentDir);
+
+            // Get previous interactions for this session
+            var previousInteractions = GetPreviousInteractionsFromHistory(sessionId);
+
+            // Create structured request schema
+            var requestSchema = _communicationService.CreateRequestSchema(
+                sessionId, 
+                prompt, 
+                _toolRepository, 
+                _strategy.Name, 
+                previousInteractions);
+
+            // Serialize request for logging
+            var requestJson = _communicationService.SerializeRequest(requestSchema);
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_request_schema.json", requestJson);
+
+            // Call LLM with structured request
+            var llmResponseJson = await CallLLMWithSchemaAsync(requestSchema, sessionId);
+            
+            // Parse response using communication service
+            var responseSchema = _communicationService.ParseResponseSchema(llmResponseJson);
+            
+            // Validate response schema
+            var (isValid, validationErrors) = _communicationService.ValidateResponseSchema(responseSchema);
+            if (!isValid)
+            {
+                _logger.LogWarning("Session {SessionId}: Response validation failed: {Errors}", 
+                    sessionId, string.Join(", ", validationErrors));
+                    
+                return $"Error: Invalid response format. Validation errors: {string.Join(", ", validationErrors)}";
+            }
+
+            // Log the structured response
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_response_schema.json", llmResponseJson);
+
+            // Extract and execute the next step if available
+            var (toolName, parameters, expectedOutcome) = _communicationService.ExtractExecutableAction(responseSchema);
+            
+            string finalResponse = responseSchema.Analysis.Summary;
+            
+            if (!string.IsNullOrEmpty(toolName) && toolName != "None")
+            {
+                try
+                {
+                    _logger.LogInformation("Session {SessionId}: Executing tool {ToolName} with expected outcome: {Outcome}", 
+                        sessionId, toolName, expectedOutcome);
+                        
+                    var toolResponse = ExecuteToolFromSchema(sessionId, toolName, parameters);
+                    
+                    // Update conversation history
+                    var interaction = new InteractionHistory
+                    {
+                        Step = previousInteractions.Count + 1,
+                        Query = prompt,
+                        Response = llmResponseJson,
+                        ToolsUsed = new List<string> { toolName },
+                        Timestamp = DateTime.UtcNow,
+                        Success = true
+                    };
+                    
+                    SaveInteractionToHistory(sessionId, interaction);
+                    
+                    finalResponse = $"{responseSchema.Analysis.Summary}\n\nTool Execution Result:\n{toolResponse}";
+                    
+                    // Check if we need continuation
+                    if (!responseSchema.Continuation.IsComplete && responseSchema.Continuation.RequiresUserConfirmation)
+                    {
+                        finalResponse += $"\n\nNext Expected Input: {responseSchema.Continuation.NextExpectedInput}";
+                        finalResponse += $"\nProgress: {responseSchema.Continuation.ProgressPercentage}%";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Session {SessionId}: Tool execution failed for {ToolName}", sessionId, toolName);
+                    finalResponse = $"{responseSchema.Analysis.Summary}\n\nTool execution failed: {ex.Message}";
+                }
+            }
+
+            return finalResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: AnswerWithSchemaAsync failed", sessionId);
+            return $"Error processing request: {ex.Message}";
+        }
+    }
+
+    private async Task<string> CallLLMWithSchemaAsync(LLMRequestSchema requestSchema, string sessionId)
+    {
+        try
+        {
+            // Convert schema to messages format for Ollama
+            var systemPrompt = CreateSystemPromptFromSchema(requestSchema);
+            var userPrompt = CreateUserPromptFromSchema(requestSchema);
+            
+            var messages = new List<(string role, string content)>
+            {
+                ("system", systemPrompt),
+                ("user", userPrompt)
+            };
+
+            // Log the initial prompts for debugging and transparency
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_system_prompt.txt", 
+                $"System Prompt:\n{systemPrompt}\n");
+            
+            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_user_prompt.txt", 
+                $"User Prompt:\n{userPrompt}\n");
+
+            _logger.LogInformation("Session {SessionId}: Calling LLM with schema-based request", sessionId);
+            _logger.LogDebug("Session {SessionId}: System prompt length: {SystemLength}, User prompt length: {UserLength}", 
+                sessionId, systemPrompt.Length, userPrompt.Length);
+
+            var response = await _ollamaClient.ChatAsync(_model, messages);
+            
+            _logger.LogDebug("Session {SessionId}: Received LLM response with {Length} characters", 
+                sessionId, response.Length);
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: CallLLMWithSchemaAsync failed", sessionId);
+            throw;
+        }
+    }
+
+    private string CreateSystemPromptFromSchema(LLMRequestSchema requestSchema)
+    {
+        var systemPrompt = $@"You are an AI assistant operating with the {requestSchema.Strategy.Name} strategy.
+
+RESPONSE FORMAT REQUIREMENT:
+You MUST respond with a valid JSON object matching this exact schema:
+
+{{
+  ""sessionId"": ""{requestSchema.SessionId}"",
+  ""status"": {{
+    ""success"": true,
+    ""statusCode"": ""OK"",
+    ""message"": ""Response message""
+  }},
+  ""analysis"": {{
+    ""summary"": ""Brief summary of your analysis"",
+    ""keyFindings"": [""finding1"", ""finding2""],
+    ""riskAssessment"": {{
+      ""riskLevel"": ""low|medium|high"",
+      ""identifiedRisks"": [""risk1"", ""risk2""]
+    }}
+  }},
+  ""nextStep"": {{
+    ""stepNumber"": 1,
+    ""action"": ""Specific executable action"",
+    ""toolName"": ""ToolName or None"",
+    ""parameters"": {{}},
+    ""expectedOutcome"": ""What this step should achieve""
+  }},
+  ""confidence"": {{
+    ""overallConfidence"": 0.75,
+    ""uncertaintyFactors"": [""factor1"", ""factor2""]
+  }},
+  ""continuation"": {{
+    ""requiresUserConfirmation"": true,
+    ""isComplete"": false,
+    ""progressPercentage"": 10
+  }}
+}}
+
+AVAILABLE TOOLS:
+{string.Join("\n", requestSchema.AvailableTools.Select(t => $"- {t.Name}: {t.Description}"))}
+
+STRATEGY REQUIREMENTS:
+- Risk Level: {requestSchema.Strategy.RiskLevel}
+- Require Confirmation: {requestSchema.Strategy.RequireConfirmation}
+- Max Steps Per Response: {requestSchema.Strategy.MaxStepsPerResponse}
+- Analysis Depth: {requestSchema.Strategy.AnalysisDepth}";
+
+        return systemPrompt;
+    }
+
+    private string CreateUserPromptFromSchema(LLMRequestSchema requestSchema)
+    {
+        var userPrompt = $@"User Query: {requestSchema.UserQuery}
+
+Context:
+- Session ID: {requestSchema.SessionId}
+- Current Step: {requestSchema.Context.CurrentStep}
+- Working Directory: {requestSchema.Context.WorkingDirectory}
+
+Previous Interactions: {requestSchema.PreviousInteractions.Count}
+
+Please analyze this request and provide your response in the required JSON schema format.";
+
+        return userPrompt;
+    }
+
+    private string ExecuteToolFromSchema(string sessionId, string toolName, Dictionary<string, object> parameters)
+    {
+        // Convert parameters dictionary to the format expected by ExecuteTool
+        var parametersDict = parameters.ToDictionary(
+            p => p.Key, 
+            p => p.Value?.ToString() ?? "");
+        
+        return ExecuteTool(toolName, parametersDict, sessionId);
+    }
+
+    private List<InteractionHistory> GetPreviousInteractionsFromHistory(string sessionId)
+    {
+        // Load from file system if available
+        var historyFile = Path.Combine(_sessionFileSystem.GetSessionRoot(sessionId), "interaction_history.json");
+        
+        if (File.Exists(historyFile))
+        {
+            try
+            {
+                var json = File.ReadAllText(historyFile);
+                return JsonSerializer.Deserialize<List<InteractionHistory>>(json) ?? new List<InteractionHistory>();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load interaction history for session {SessionId}", sessionId);
+            }
+        }
+        
+        return new List<InteractionHistory>();
+    }
+
+    private void SaveInteractionToHistory(string sessionId, InteractionHistory interaction)
+    {
+        try
+        {
+            var historyFile = Path.Combine(_sessionFileSystem.GetSessionRoot(sessionId), "interaction_history.json");
+            var interactions = GetPreviousInteractionsFromHistory(sessionId);
+            interactions.Add(interaction);
+            
+            var json = JsonSerializer.Serialize(interactions, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(historyFile, json);
+            
+            _logger.LogDebug("Session {SessionId}: Saved interaction history with {Count} entries", 
+                sessionId, interactions.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save interaction history for session {SessionId}", sessionId);
+        }
+    }
+}

@@ -15,7 +15,7 @@ namespace Ollama.Infrastructure.Services
         private readonly IToolRepository _toolRepository;
         private readonly IModelRegistryService _modelRegistry;
         private readonly ILogger<PlanningService> _logger;
-        private const string PLANNING_MODEL = "llama3.1:8b-instruct";
+        private const string PLANNING_MODEL = "llama3.1:8b";
 
         public PlanningService(
             IPythonLlmClient pythonClient,

@@ -1,0 +1,22 @@
+User Query: Hello world
+Formatted Prompt: Process the following request with maximum caution and verification (Session: 810c8237-efef-43f0-a078-f381d4e58022):
+
+User Query: Hello world
+
+CRITICAL REQUIREMENTS:
+1. Respond only in JSON format
+2. Break this down into the smallest possible verified steps
+3. Your 'nextStep' must be a SPECIFIC EXECUTABLE ACTION, not a description
+4. If you need to download a repository, use GitHubDownloader tool
+5. If you need to analyze file sizes, use FileSystemAnalyzer tool  
+6. If you need to read code content, use CodeAnalyzer tool
+7. Consider what could go wrong at each step
+8. Use tools when you need to verify information
+9. Never assume anything works without verification
+
+FIRST STEP GUIDANCE:
+- For repository analysis: Start with "Use GitHubDownloader tool to download the repository from [URL]"
+- For file analysis: Start with "Use FileSystemAnalyzer tool to analyze the downloaded repository structure"
+- For code reading: Start with "Use CodeAnalyzer tool to read and analyze [specific file]"
+
+Make your nextStep immediately actionable!
