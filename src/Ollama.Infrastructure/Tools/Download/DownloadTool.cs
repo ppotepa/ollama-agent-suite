@@ -42,6 +42,59 @@ namespace Ollama.Infrastructure.Tools.Download
             return Task.FromResult(0.1m); // Small cost for network operations
         }
 
+        public override IEnumerable<string> GetAlternativeMethods()
+        {
+            return new[] { "http_with_retry", "webclient_download", "stream_download", "external_tool_download" };
+        }
+
+        protected override async Task<ToolResult> RunAlternativeMethodAsync(ToolContext context, string methodName, CancellationToken cancellationToken = default)
+        {
+            var startTime = DateTime.Now;
+            
+            try
+            {
+                EnsureSessionScopeInitialized(context);
+                var navigationResult = ProcessCursorNavigation(context);
+                
+                var missingParams = ValidateRequiredParameters(context, "url");
+                if (missingParams.Length > 0)
+                {
+                    return CreateResult(false, errorMessage: $"Missing required parameters: {string.Join(", ", missingParams)}", startTime: startTime);
+                }
+
+                var url = context.Parameters["url"].ToString()!;
+                var targetDirectory = context.Parameters.TryGetValue("targetDirectory", out var targetDirObj) 
+                    ? targetDirObj?.ToString() ?? "downloads" 
+                    : "downloads";
+                var filename = context.Parameters.TryGetValue("filename", out var filenameObj) 
+                    ? filenameObj?.ToString() 
+                    : null;
+                var extractArchives = context.Parameters.TryGetValue("extractArchives", out var extractObj) 
+                    && extractObj is bool extract && extract;
+                var overwrite = context.Parameters.TryGetValue("overwrite", out var overwriteObj) 
+                    && overwriteObj is bool ow && ow;
+
+                var downloadSource = DownloadSourceExtensions.DetectFromUrl(url);
+
+                string result = methodName switch
+                {
+                    "http_with_retry" => await DownloadWithHttpRetry(url, downloadSource, targetDirectory, filename, extractArchives, overwrite, cancellationToken),
+                    "webclient_download" => await DownloadWithWebClient(url, downloadSource, targetDirectory, filename, extractArchives, overwrite, cancellationToken),
+                    "stream_download" => await DownloadWithStream(url, downloadSource, targetDirectory, filename, extractArchives, overwrite, cancellationToken),
+                    "external_tool_download" => await DownloadWithExternalTool(url, downloadSource, targetDirectory, filename, extractArchives, overwrite, cancellationToken),
+                    _ => throw new NotSupportedException($"Alternative method '{methodName}' is not supported")
+                };
+
+                Logger.LogInformation("Download completed using alternative method {Method} from: {Url}", methodName, url);
+                return CreateSuccessResultWithContext(result, navigationResult, startTime);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error during download with alternative method {Method}", methodName);
+                return CreateResult(false, errorMessage: $"Download failed with method {methodName}: {ex.Message}", startTime: startTime);
+            }
+        }
+
         public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
@@ -313,5 +366,219 @@ namespace Ollama.Infrastructure.Tools.Download
             var extension = Path.GetExtension(filename).ToLower();
             return extension is ".zip" or ".tar" or ".gz" or ".rar" or ".7z";
         }
+
+        #region Alternative Download Methods
+
+        /// <summary>
+        /// Alternative method 1: HTTP download with retry mechanism
+        /// </summary>
+        private async Task<string> DownloadWithHttpRetry(string url, DownloadSource source, string targetDirectory, string? filename, bool extractArchives, bool overwrite, CancellationToken cancellationToken)
+        {
+            const int maxRetries = 3;
+            var delay = TimeSpan.FromSeconds(1);
+            Exception? lastException = null;
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                try
+                {
+                    using var client = new HttpClient();
+                    client.Timeout = TimeSpan.FromMinutes(10); // Extended timeout
+                    client.DefaultRequestHeaders.Add("User-Agent", "OllamaAgentSuite/1.0");
+
+                    using var response = await client.GetAsync(url, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+
+                    var targetPath = GetSafePath(Path.Combine(targetDirectory, filename ?? GetFilenameFromUrl(url, source)));
+                    var targetDir = Path.GetDirectoryName(targetPath)!;
+                    System.IO.Directory.CreateDirectory(targetDir);
+
+                    if (System.IO.File.Exists(targetPath) && !overwrite)
+                    {
+                        return $"File already exists: {GetRelativePath(targetPath)}";
+                    }
+
+                    using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 8192, useAsync: true);
+                    await response.Content.CopyToAsync(fileStream, cancellationToken);
+
+                    var result = $"Downloaded: {GetRelativePath(targetPath)}\nSize: {FormatFileSize(new FileInfo(targetPath).Length)}";
+
+                    if (extractArchives && IsArchiveFile(targetPath))
+                    {
+                        var extractDir = Path.Combine(Path.GetDirectoryName(targetPath)!, Path.GetFileNameWithoutExtension(targetPath));
+                        result += "\n" + await ExtractArchive(targetPath, extractDir, cancellationToken);
+                    }
+
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(delay, cancellationToken);
+                        delay = TimeSpan.FromSeconds(delay.TotalSeconds * 2); // Exponential backoff
+                    }
+                }
+            }
+
+            throw new InvalidOperationException($"Download failed after {maxRetries} attempts: {lastException?.Message}", lastException);
+        }
+
+        /// <summary>
+        /// Alternative method 2: WebClient download (legacy .NET Framework API)
+        /// </summary>
+        private async Task<string> DownloadWithWebClient(string url, DownloadSource source, string targetDirectory, string? filename, bool extractArchives, bool overwrite, CancellationToken cancellationToken)
+        {
+            var targetPath = GetSafePath(Path.Combine(targetDirectory, filename ?? GetFilenameFromUrl(url, source)));
+            var targetDir = Path.GetDirectoryName(targetPath)!;
+            System.IO.Directory.CreateDirectory(targetDir);
+
+            if (System.IO.File.Exists(targetPath) && !overwrite)
+            {
+                return $"File already exists: {GetRelativePath(targetPath)}";
+            }
+
+            // Use HttpClient but mimic WebClient behavior
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("User-Agent", "OllamaAgentSuite/WebClient/1.0");
+
+            var bytes = await client.GetByteArrayAsync(url, cancellationToken);
+            await System.IO.File.WriteAllBytesAsync(targetPath, bytes, cancellationToken);
+
+            var result = $"Downloaded (WebClient style): {GetRelativePath(targetPath)}\nSize: {FormatFileSize(bytes.Length)}";
+
+            if (extractArchives && IsArchiveFile(targetPath))
+            {
+                var extractDir = Path.Combine(Path.GetDirectoryName(targetPath)!, Path.GetFileNameWithoutExtension(targetPath));
+                result += "\n" + await ExtractArchive(targetPath, extractDir, cancellationToken);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Alternative method 3: Stream-based download with progress tracking
+        /// </summary>
+        private async Task<string> DownloadWithStream(string url, DownloadSource source, string targetDirectory, string? filename, bool extractArchives, bool overwrite, CancellationToken cancellationToken)
+        {
+            var targetPath = GetSafePath(Path.Combine(targetDirectory, filename ?? GetFilenameFromUrl(url, source)));
+            var targetDir = Path.GetDirectoryName(targetPath)!;
+            System.IO.Directory.CreateDirectory(targetDir);
+
+            if (System.IO.File.Exists(targetPath) && !overwrite)
+            {
+                return $"File already exists: {GetRelativePath(targetPath)}";
+            }
+
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("User-Agent", "OllamaAgentSuite/Stream/1.0");
+
+            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var totalBytes = response.Content.Headers.ContentLength ?? 0;
+            using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 16384, useAsync: true);
+
+            var buffer = new byte[16384];
+            long totalRead = 0;
+            int bytesRead;
+
+            while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+            {
+                await fileStream.WriteAsync(buffer, 0, bytesRead, cancellationToken);
+                totalRead += bytesRead;
+            }
+
+            var result = $"Downloaded (Stream): {GetRelativePath(targetPath)}\nSize: {FormatFileSize(totalRead)}";
+
+            if (extractArchives && IsArchiveFile(targetPath))
+            {
+                var extractDir = Path.Combine(Path.GetDirectoryName(targetPath)!, Path.GetFileNameWithoutExtension(targetPath));
+                result += "\n" + await ExtractArchive(targetPath, extractDir, cancellationToken);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Alternative method 4: Use external tools (curl, wget) as fallback
+        /// </summary>
+        private async Task<string> DownloadWithExternalTool(string url, DownloadSource source, string targetDirectory, string? filename, bool extractArchives, bool overwrite, CancellationToken cancellationToken)
+        {
+            var targetPath = GetSafePath(Path.Combine(targetDirectory, filename ?? GetFilenameFromUrl(url, source)));
+            var targetDir = Path.GetDirectoryName(targetPath)!;
+            System.IO.Directory.CreateDirectory(targetDir);
+
+            if (System.IO.File.Exists(targetPath) && !overwrite)
+            {
+                return $"File already exists: {GetRelativePath(targetPath)}";
+            }
+
+            // Try curl first, then wget, then PowerShell
+            var commands = new[]
+            {
+                $"curl -L -o \"{targetPath}\" \"{url}\"",
+                $"wget -O \"{targetPath}\" \"{url}\"",
+                $"powershell -Command \"Invoke-WebRequest -Uri '{url}' -OutFile '{targetPath}'\""
+            };
+
+            foreach (var command in commands)
+            {
+                try
+                {
+                    var process = new System.Diagnostics.Process();
+                    var outputBuilder = new StringBuilder();
+                    var errorBuilder = new StringBuilder();
+
+                    process.StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c {command}",
+                        WorkingDirectory = targetDir,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+
+                    process.OutputDataReceived += (sender, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
+                    process.ErrorDataReceived += (sender, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
+
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+
+                    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+                    using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+                    await process.WaitForExitAsync(combinedCts.Token);
+
+                    if (process.ExitCode == 0 && System.IO.File.Exists(targetPath))
+                    {
+                        var fileInfo = new FileInfo(targetPath);
+                        var result = $"Downloaded (External Tool): {GetRelativePath(targetPath)}\nSize: {FormatFileSize(fileInfo.Length)}\nTool: {command.Split(' ')[0]}";
+
+                        if (extractArchives && IsArchiveFile(targetPath))
+                        {
+                            var extractDir = Path.Combine(Path.GetDirectoryName(targetPath)!, Path.GetFileNameWithoutExtension(targetPath));
+                            result += "\n" + await ExtractArchive(targetPath, extractDir, cancellationToken);
+                        }
+
+                        return result;
+                    }
+                }
+                catch
+                {
+                    // Try next command
+                    continue;
+                }
+            }
+
+            throw new InvalidOperationException("All external download tools failed");
+        }
+
+        #endregion
     }
 }

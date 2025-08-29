@@ -36,6 +36,7 @@ public static class ServiceRegistration
         
         // Register session-scoped services for cursor navigation
         services.AddScoped<ISessionScope, SessionScope>();
+        services.AddSingleton<ICursorConfigurationService, CursorConfigurationService>();
         
         // Register Ollama settings and client
         services.AddSingleton<OllamaSettings>(provider => new OllamaSettings());

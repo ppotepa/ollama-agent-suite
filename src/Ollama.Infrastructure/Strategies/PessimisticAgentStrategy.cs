@@ -51,30 +51,16 @@ public class PessimisticAgentStrategy : IAgentStrategy
 
     public string FormatQueryPrompt(string userQuery, string? sessionId = null)
     {
-        try
-        {
-            // Load the query prompt template and process placeholders
-            var promptTask = _promptService.GetProcessedPromptAsync(
-                "query-prompt-template.txt", 
-                sessionId ?? "query-format");
+        _logger?.LogDebug("FormatQueryPrompt called with userQuery: '{UserQuery}', sessionId: '{SessionId}'", 
+            userQuery ?? "NULL", sessionId ?? "NULL");
             
-            var template = promptTask.GetAwaiter().GetResult();
-            
-            // Replace the [QUERY] placeholder with the actual query
-            var sessionInfo = !string.IsNullOrEmpty(sessionId) ? $" (Session: {sessionId})" : "";
-            var processedTemplate = template.Replace("[QUERY]", userQuery)
-                                           .Replace("[SESSION_INFO]", sessionInfo);
-            
-            return processedTemplate;
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Error loading query prompt template, using basic format");
-            
-            // Simple fallback without hardcoded template
-            var sessionInfo = !string.IsNullOrEmpty(sessionId) ? $" (Session: {sessionId})" : "";
-            return $"Process the following request{sessionInfo}:\n\nUser Query: {userQuery}";
-        }
+        // Simple format without external template - the user query is passed directly to the LLM
+        // The pessimistic system prompt already contains all necessary instructions for JSON-only responses
+        var sessionInfo = !string.IsNullOrEmpty(sessionId) ? $" (Session: {sessionId})" : "";
+        var formattedQuery = $"User Query: {userQuery ?? ""}{sessionInfo}";
+        
+        _logger?.LogDebug("Formatted query length: {Length}", formattedQuery.Length);
+        return formattedQuery;
     }
 
     public bool IsTaskComplete(string response)
@@ -572,8 +558,10 @@ Continue processing with extreme caution. Verify everything before drawing concl
                 ? legacyConfElement.GetDouble() 
                 : 0.5;
             
-            // Pessimistic validation rules
-            if (legacyTaskComplete && legacyConfidence < 0.8)
+            // Pessimistic validation rules - only require confidence for ongoing tasks
+            // If task is complete (taskCompleted: true, nextStep: null), confidence is not required
+            bool isTaskComplete = taskCompleted && (!nextStep.HasValue || nextStep.Value.ValueKind == JsonValueKind.Null);
+            if (legacyTaskComplete && !isTaskComplete && legacyConfidence < 0.8)
             {
                 _logger?.LogWarning("Task marked complete but confidence insufficient: {Confidence}", legacyConfidence);
                 return CreateErrorResponse("Task completion requires higher confidence level (>= 0.8)");
@@ -1050,9 +1038,64 @@ Continue processing with extreme caution. Verify everything before drawing concl
         // If we found a complete JSON object, extract it
         if (jsonEnd > firstBrace)
         {
-            return response.Substring(firstBrace, jsonEnd - firstBrace + 1);
+            var rawJson = response.Substring(firstBrace, jsonEnd - firstBrace + 1);
+            // Remove C++-style comments that break JSON parsing
+            return RemoveJsonComments(rawJson);
         }
         
         return "";
+    }
+    
+    private string RemoveJsonComments(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return json;
+        
+        var lines = json.Split('\n');
+        var cleanedLines = new List<string>();
+        
+        foreach (var line in lines)
+        {
+            var cleanLine = line;
+            var commentIndex = line.IndexOf("//");
+            
+            // Only remove comments that are not inside string literals
+            if (commentIndex >= 0)
+            {
+                // Count quotes before the comment to ensure we're not inside a string
+                var quotesBeforeComment = 0;
+                var escaped = false;
+                
+                for (int i = 0; i < commentIndex; i++)
+                {
+                    if (escaped)
+                    {
+                        escaped = false;
+                        continue;
+                    }
+                    
+                    if (line[i] == '\\')
+                    {
+                        escaped = true;
+                        continue;
+                    }
+                    
+                    if (line[i] == '"')
+                    {
+                        quotesBeforeComment++;
+                    }
+                }
+                
+                // If even number of quotes, we're not inside a string, so remove the comment
+                if (quotesBeforeComment % 2 == 0)
+                {
+                    cleanLine = line.Substring(0, commentIndex).TrimEnd();
+                }
+            }
+            
+            cleanedLines.Add(cleanLine);
+        }
+        
+        return string.Join('\n', cleanedLines);
     }
 }

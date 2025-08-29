@@ -1,0 +1,8 @@
+{
+  "SessionId": "9bf1622e-103e-4973-907d-ed05cbc03f0c",
+  "Strategy": "Pessimistic",
+  "InitialPrompt": "Hello world",
+  "SessionRoot": "D:\\git\\ppotepa\\ollama-agent-suite\\cache\\9bf1622e-103e-4973-907d-ed05cbc03f0c",
+  "CurrentDirectory": "D:\\git\\ppotepa\\ollama-agent-suite\\cache\\9bf1622e-103e-4973-907d-ed05cbc03f0c",
+  "CreatedAt": "2025-08-29T13:20:31.3726015Z"
+}

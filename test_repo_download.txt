@@ -1,1 +1,0 @@
-Please download the repository https://github.com/ppotepa/ClickBytez.EF.Gateway and analyze its structure

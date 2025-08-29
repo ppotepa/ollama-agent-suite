@@ -76,27 +76,26 @@ namespace Ollama.Infrastructure.Tools
                 // Convert GitHub URL to API format for download
                 var apiUrl = ConvertToGitHubApiUrl(repoUrl!);
                 Logger.LogInformation("GitHubDownloader: Converted to API URL: {ApiUrl}", apiUrl);
-                // Use session-safe working directory for cache
+                // Use session-safe working directory for downloads
                 var safeWorkingDir = SessionScope.FileSystem.GetSafeWorkingDirectory(context.SessionId);
-                var cacheDir = Path.Combine(safeWorkingDir, "cache");
                 
-                // Validate cache directory is within session boundaries
-                if (!SessionScope.FileSystem.IsWithinSessionBoundary(context.SessionId, cacheDir))
+                // Validate working directory is within session boundaries (should always be true)
+                if (!SessionScope.FileSystem.IsWithinSessionBoundary(context.SessionId, safeWorkingDir))
                 {
                     return new ToolResult
                     {
                         Success = false,
-                        ErrorMessage = "Cache directory is outside session boundaries",
+                        ErrorMessage = "Working directory is outside session boundaries",
                         ExecutionTime = DateTime.Now - startTime
                     };
                 }
                 
-                System.IO.Directory.CreateDirectory(cacheDir);
-                Logger.LogDebug("GitHubDownloader: Created cache directory: {CacheDir}", cacheDir);
+                System.IO.Directory.CreateDirectory(safeWorkingDir);
+                Logger.LogDebug("GitHubDownloader: Using working directory: {WorkingDir}", safeWorkingDir);
                 
                 var repoName = ExtractRepoName(repoUrl!);
-                var zipPath = Path.Combine(cacheDir, $"{repoName}.zip");
-                var extractPath = Path.Combine(cacheDir, repoName);
+                var zipPath = Path.Combine(safeWorkingDir, $"{repoName}.zip");
+                var extractPath = Path.Combine(safeWorkingDir, repoName);
                 
                 // Validate all paths are within session boundaries
                 if (!SessionScope.FileSystem.IsWithinSessionBoundary(context.SessionId, zipPath) ||
@@ -304,12 +303,11 @@ namespace Ollama.Infrastructure.Tools
             Logger.LogInformation("GitHubDownloader: Trying direct download URL: {Url}", directUrl);
             
             var safeWorkingDir = SessionScope.FileSystem.GetSafeWorkingDirectory(context.SessionId!);
-            var cacheDir = Path.Combine(safeWorkingDir, "cache");
-            System.IO.Directory.CreateDirectory(cacheDir);
+            System.IO.Directory.CreateDirectory(safeWorkingDir);
             
             var repoName = $"{owner}-{repo}";
-            var zipPath = Path.Combine(cacheDir, $"{repoName}-{branch}.zip");
-            var extractPath = Path.Combine(cacheDir, $"{repoName}-{branch}");
+            var zipPath = Path.Combine(safeWorkingDir, $"{repoName}-{branch}.zip");
+            var extractPath = Path.Combine(safeWorkingDir, $"{repoName}-{branch}");
             
             try
             {
@@ -362,12 +360,11 @@ namespace Ollama.Infrastructure.Tools
             request.Headers.Add("User-Agent", "ollama-agent-suite");
             
             var safeWorkingDir = SessionScope.FileSystem.GetSafeWorkingDirectory(context.SessionId!);
-            var cacheDir = Path.Combine(safeWorkingDir, "cache");
-            System.IO.Directory.CreateDirectory(cacheDir);
+            System.IO.Directory.CreateDirectory(safeWorkingDir);
             
             var repoName = $"{owner}-{repo}";
-            var zipPath = Path.Combine(cacheDir, $"{repoName}-api.zip");
-            var extractPath = Path.Combine(cacheDir, $"{repoName}-api");
+            var zipPath = Path.Combine(safeWorkingDir, $"{repoName}-api.zip");
+            var extractPath = Path.Combine(safeWorkingDir, $"{repoName}-api");
             
             try
             {
@@ -401,11 +398,10 @@ namespace Ollama.Infrastructure.Tools
             Logger.LogInformation("GitHubDownloader: Trying git clone fallback for: {RepoUrl}", repoUrl);
             
             var safeWorkingDir = SessionScope.FileSystem.GetSafeWorkingDirectory(context.SessionId!);
-            var cacheDir = Path.Combine(safeWorkingDir, "cache");
-            System.IO.Directory.CreateDirectory(cacheDir);
+            System.IO.Directory.CreateDirectory(safeWorkingDir);
             
             var repoName = ExtractRepoName(repoUrl);
-            var clonePath = Path.Combine(cacheDir, $"{repoName}-git");
+            var clonePath = Path.Combine(safeWorkingDir, $"{repoName}-git");
             
             try
             {
@@ -426,7 +422,7 @@ namespace Ollama.Infrastructure.Tools
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
                         CreateNoWindow = true,
-                        WorkingDirectory = cacheDir
+                        WorkingDirectory = safeWorkingDir
                     }
                 };
                 

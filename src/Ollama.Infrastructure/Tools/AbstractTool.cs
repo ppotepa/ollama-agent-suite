@@ -1,5 +1,6 @@
 using Ollama.Domain.Tools;
 using Ollama.Domain.Services;
+using Ollama.Domain.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Text;
 
@@ -12,11 +13,13 @@ namespace Ollama.Infrastructure.Tools
     {
         protected readonly ISessionScope SessionScope;
         protected readonly ILogger Logger;
+        protected readonly ICursorConfigurationService? CursorConfigurationService;
 
-        protected AbstractTool(ISessionScope sessionScope, ILogger logger)
+        protected AbstractTool(ISessionScope sessionScope, ILogger logger, ICursorConfigurationService? cursorConfigurationService = null)
         {
             SessionScope = sessionScope;
             Logger = logger;
+            CursorConfigurationService = cursorConfigurationService;
         }
 
         /// <summary>
@@ -365,28 +368,65 @@ namespace Ollama.Infrastructure.Tools
         }
 
         /// <summary>
-        /// Converts an absolute path to a relative path from session root
+        /// Converts an absolute path to a relative path from session root with security controls
         /// </summary>
         protected string GetRelativePath(string fullPath)
         {
             var sessionRoot = SessionScope.SessionRoot;
+            
+            // Use the cursor configuration service if available
+            if (CursorConfigurationService != null)
+            {
+                return CursorConfigurationService.FormatPath(fullPath, sessionRoot);
+            }
+            
+            // Fallback to secure default behavior if service is not available
             if (fullPath.StartsWith(sessionRoot, StringComparison.OrdinalIgnoreCase))
             {
                 var relative = fullPath.Substring(sessionRoot.Length);
                 var trimmed = relative.TrimStart('\\', '/');
                 return string.IsNullOrEmpty(trimmed) ? "." : trimmed;
             }
-            return fullPath;
+            else
+            {
+                // Default to masking external paths for security
+                return "[EXTERNAL_PATH]";
+            }
         }
 
+        /// <summary>
+        /// Gets a secure display path that respects cursor settings and session boundaries
+        /// </summary>
+        protected string GetSecureDisplayPath(string fullPath, string context = "")
+        {
+            var relativePath = GetRelativePath(fullPath);
+            
+            // Add debug context if cursor configuration service has debug enabled
+            if (CursorConfigurationService?.Settings.IncludeDebugPaths == true && !string.IsNullOrEmpty(context))
+            {
+                return $"{relativePath} ({context})";
+            }
+            
+            return relativePath;
+        }
+
+        /// <summary>
+        /// Creates a cursor context summary for tool output
         /// <summary>
         /// Creates a cursor context summary for tool output
         /// </summary>
         protected string GetCursorContext()
         {
             var sb = new StringBuilder();
+            
             sb.AppendLine($"Session: {SessionScope.SessionId}");
             sb.AppendLine($"Current directory: {GetCurrentDirectory()}");
+            
+            if (CursorConfigurationService?.Settings.IncludeDebugPaths == true)
+            {
+                sb.AppendLine($"Session root: {GetRelativePath(SessionScope.SessionRoot)}");
+            }
+            
             return sb.ToString();
         }
 

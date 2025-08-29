@@ -1,0 +1,44 @@
+{
+  "SessionId": "9bf1622e-103e-4973-907d-ed05cbc03f0c",
+  "CompletedAt": "2025-08-29T13:20:37.8072962Z",
+  "Strategy": "Pessimistic",
+  "Model": "qwen2.5:7b-instruct-q4_K_M",
+  "SessionDuration": 0.10716411666666667,
+  "Statistics": {
+    "TotalMessages": 3,
+    "UserMessages": 1,
+    "AssistantMessages": 1,
+    "SystemMessages": 1,
+    "ToolExecutions": 0,
+    "UniqueToolsUsed": 0,
+    "TotalContentLength": 28990,
+    "AverageMessageLength": 9663.333333333334
+  },
+  "ToolsUsed": [],
+  "MessageTimeline": [
+    {
+      "Index": 0,
+      "Timestamp": "2025-08-29T13:20:31.3625085Z",
+      "Role": "system",
+      "ContentLength": 28640,
+      "ToolName": null,
+      "IsToolResponse": false
+    },
+    {
+      "Index": 1,
+      "Timestamp": "2025-08-29T13:20:31.3962963Z",
+      "Role": "user",
+      "ContentLength": 71,
+      "ToolName": null,
+      "IsToolResponse": false
+    },
+    {
+      "Index": 2,
+      "Timestamp": "2025-08-29T13:20:37.7923555Z",
+      "Role": "assistant",
+      "ContentLength": 279,
+      "ToolName": null,
+      "IsToolResponse": false
+    }
+  ]
+}

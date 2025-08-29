@@ -31,6 +31,13 @@ namespace Ollama.Bootstrap.Configuration
             configuration.GetSection("Infrastructure").Bind(infrastructureSettings);
             services.AddSingleton(infrastructureSettings);
 
+            var cursorSettings = new CursorSettings();
+            configuration.GetSection("Cursor").Bind(cursorSettings);
+            services.AddSingleton(cursorSettings);
+
+            // Configure CursorSettings for IOptions pattern
+            services.Configure<CursorSettings>(configuration.GetSection("Cursor"));
+
             // Configure PythonSubsystemSettings
             services.Configure<PythonSubsystemSettings>(configuration.GetSection("PythonSubsystem"));
 
