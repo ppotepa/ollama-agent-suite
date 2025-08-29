@@ -97,7 +97,7 @@ public class IntelligentModeTests
         
         _mockAgent.Setup(a => a.Think("What is 2 + 2?")).Returns("This is arithmetic");
         _mockAgent.Setup(a => a.Plan("What is 2 + 2?")).Returns("Calculate using math tool");
-        _mockAgent.Setup(a => a.Answer("What is 2 + 2?")).Returns("The answer is 4");
+        _mockAgent.Setup(a => a.Answer("What is 2 + 2?", It.IsAny<string>())).Returns("The answer is 4");
 
         // Act
         var result = _intelligentMode.Execute(context);
@@ -124,7 +124,7 @@ public class IntelligentModeTests
         
         _mockAgent.Setup(a => a.Think("Test query")).Returns("Thinking");
         _mockAgent.Setup(a => a.Plan("Test query")).Returns("Planning");
-        _mockAgent.Setup(a => a.Answer("Test query")).Returns("Answer");
+        _mockAgent.Setup(a => a.Answer("Test query", It.IsAny<string>())).Returns("Answer");
 
         // Act
         var result = _intelligentMode.Execute(context);
@@ -132,7 +132,7 @@ public class IntelligentModeTests
         // Assert
         _mockAgent.Verify(a => a.Think("Test query"), Times.Once);
         _mockAgent.Verify(a => a.Plan("Test query"), Times.Once);
-        _mockAgent.Verify(a => a.Answer("Test query"), Times.Once);
+        _mockAgent.Verify(a => a.Answer("Test query", It.IsAny<string>()), Times.Once);
         
         Assert.That(result, Is.Not.Null);
         Assert.That(result.ContainsKey("reasoning"), Is.True);
@@ -148,7 +148,7 @@ public class IntelligentModeTests
         
         _mockAgent.Setup(a => a.Think(It.IsAny<string>())).Returns("Thinking");
         _mockAgent.Setup(a => a.Plan(It.IsAny<string>())).Returns("Planning");
-        _mockAgent.Setup(a => a.Answer(It.IsAny<string>())).Returns("Answer");
+        _mockAgent.Setup(a => a.Answer(It.IsAny<string>(), It.IsAny<string>())).Returns("Answer");
 
         // Act
         var result = _intelligentMode.Execute(context);
@@ -160,7 +160,7 @@ public class IntelligentModeTests
         // Verify agents were called
         _mockAgent.Verify(a => a.Think("Test query"), Times.Once);
         _mockAgent.Verify(a => a.Plan("Test query"), Times.Once);
-        _mockAgent.Verify(a => a.Answer("Test query"), Times.Once);
+        _mockAgent.Verify(a => a.Answer("Test query", It.IsAny<string>()), Times.Once);
     }
 
     [TestCase("what is", true)]
@@ -191,7 +191,7 @@ public class IntelligentModeTests
         
         _mockAgent.Setup(a => a.Think(It.IsAny<string>())).Returns("Thinking");
         _mockAgent.Setup(a => a.Plan(It.IsAny<string>())).Returns("Planning");
-        _mockAgent.Setup(a => a.Answer(It.IsAny<string>())).Returns("Answer");
+        _mockAgent.Setup(a => a.Answer(It.IsAny<string>(), It.IsAny<string>())).Returns("Answer");
 
         // Act
         var result = _intelligentMode.Execute(context);

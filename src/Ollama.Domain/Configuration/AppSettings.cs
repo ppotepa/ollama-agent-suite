@@ -26,13 +26,13 @@ namespace Ollama.Domain.Configuration
         public string ModelsEndpoint { get; set; } = "http://localhost:11434/api/tags";
         
         [Required]
-        public string DefaultModel { get; set; } = "phi:latest";
+        public string DefaultModel { get; set; } = "llama3.1:8b";
         
         [Required]
-        public string CoderModel { get; set; } = "phi:latest";
+        public string CoderModel { get; set; } = "llama3.1:8b";
         
         [Required]
-        public string ThinkerModel { get; set; } = "phi:latest";
+        public string ThinkerModel { get; set; } = "llama3.1:8b";
         
         [Range(1, 300)]
         public int ConnectionTimeout { get; set; } = 30;
@@ -73,14 +73,14 @@ namespace Ollama.Domain.Configuration
     public class SingleQueryModeSettings
     {
         public bool Enabled { get; set; } = true;
-        public string DefaultModel { get; set; } = "phi:latest";
+        public string DefaultModel { get; set; } = "llama3.3:70b-instruct-q3_K_M";
         public bool DebugOutput { get; set; } = false;
     }
 
     public class IntelligentModeSettings
     {
         public bool Enabled { get; set; } = true;
-        public string DefaultModel { get; set; } = "phi:latest";
+        public string DefaultModel { get; set; } = "llama3.3:70b-instruct-q3_K_M";
         public bool UseContextSwitching { get; set; } = true;
         public bool DebugContextSwitching { get; set; } = false;
     }

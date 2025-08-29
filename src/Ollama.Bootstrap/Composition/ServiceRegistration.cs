@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http;
+using Microsoft.Extensions.Logging;
 using Ollama.Application.Modes;
 using Ollama.Application.Orchestrator;
 using Ollama.Application.Services;
@@ -9,6 +10,10 @@ using Ollama.Domain.Strategies;
 using Ollama.Domain.Tools;
 using Ollama.Infrastructure.Agents;
 using Ollama.Infrastructure.Tools;
+using Ollama.Infrastructure.Tools.Directory;
+using Ollama.Infrastructure.Tools.File;
+using Ollama.Infrastructure.Tools.Navigation;
+using Ollama.Infrastructure.Tools.Download;
 using Ollama.Infrastructure.Services;
 using Ollama.Infrastructure.Clients;
 using Ollama.Domain.Configuration;
@@ -29,17 +34,43 @@ public static class ServiceRegistration
         // Register HTTP client for tools
         services.AddHttpClient();
         
+        // Register session-scoped services for cursor navigation
+        services.AddScoped<ISessionScope, SessionScope>();
+        
         // Register Ollama settings and client
         services.AddSingleton<OllamaSettings>(provider => new OllamaSettings());
         services.AddHttpClient<BuiltInOllamaClient>();
         
-        // Register tool repository and tools
+        // Register legacy tools (to be converted to AbstractTool)
         services.AddTransient<MathEvaluator>();
-        services.AddTransient<GitHubRepositoryDownloader>();
-        services.AddTransient<FileSystemAnalyzer>();
+        services.AddTransient<GitHubRepositoryDownloader>(provider => 
+            new GitHubRepositoryDownloader(
+                provider.GetRequiredService<ISessionScope>(), 
+                provider.GetRequiredService<ILogger<GitHubRepositoryDownloader>>(),
+                provider.GetRequiredService<IHttpClientFactory>().CreateClient()));
+        services.AddTransient<FileSystemAnalyzer>(provider => 
+            new FileSystemAnalyzer(
+                provider.GetRequiredService<ISessionScope>(), 
+                provider.GetRequiredService<ILogger<FileSystemAnalyzer>>()));
         services.AddTransient<CodeAnalyzer>();
         services.AddTransient<ExternalCommandExecutor>();
         services.AddTransient<ExternalCommandDetector>();
+        
+        // Register new AbstractTool-based tools with cursor navigation
+        services.AddTransient<CursorNavigationTool>();
+        services.AddTransient<PrintWorkingDirectoryTool>();
+        services.AddTransient<DirectoryListTool>();
+        services.AddTransient<DirectoryCreateTool>();
+        services.AddTransient<DirectoryDeleteTool>();
+        services.AddTransient<DirectoryMoveTool>();
+        services.AddTransient<DirectoryCopyTool>();
+        services.AddTransient<FileReadTool>();
+        services.AddTransient<FileWriteTool>();
+        services.AddTransient<FileCopyTool>();
+        services.AddTransient<FileMoveTool>();
+        services.AddTransient<FileDeleteTool>();
+        services.AddTransient<FileAttributesTool>();
+        services.AddTransient<DownloadTool>();
         
         // Configure tool repository with tools using a factory
         services.AddSingleton<IToolRepository>(serviceProvider =>
@@ -47,20 +78,46 @@ public static class ServiceRegistration
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             var logger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ToolRepository>>();
             var gitHubDownloaderLogger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GitHubRepositoryDownloader>>();
+            var sessionFileSystem = serviceProvider.GetRequiredService<ISessionFileSystem>();
             
             var toolRepository = new ToolRepository(logger);
             
-            // Register all tools
+            // Register legacy tools (NOTE: These will be converted to AbstractTool-based implementations)
             toolRepository.RegisterTool(new MathEvaluator());
-            toolRepository.RegisterTool(new GitHubRepositoryDownloader(httpClientFactory.CreateClient(), gitHubDownloaderLogger));
-            toolRepository.RegisterTool(new FileSystemAnalyzer());
             toolRepository.RegisterTool(new CodeAnalyzer());
-            toolRepository.RegisterTool(new ExternalCommandExecutor());
+            toolRepository.RegisterTool(new ExternalCommandExecutor(sessionFileSystem));
+            
+            // Register new AbstractTool-based tools with cursor navigation support
+            // Tools are registered with a factory pattern to create dynamic session scopes
+            // When tools are executed, they will use sessionId from ToolContext
+            var sessionScopeLogger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SessionScope>>();
+            var dynamicSessionScope = new SessionScope(sessionFileSystem, sessionScopeLogger);
+            // SessionScope will be re-initialized with correct sessionId when tools execute
+            
+            toolRepository.RegisterTool(new GitHubRepositoryDownloader(dynamicSessionScope, gitHubDownloaderLogger, httpClientFactory.CreateClient()));
+            toolRepository.RegisterTool(new FileSystemAnalyzer(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileSystemAnalyzer>>()));
+            toolRepository.RegisterTool(new CursorNavigationTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CursorNavigationTool>>()));
+            toolRepository.RegisterTool(new PrintWorkingDirectoryTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrintWorkingDirectoryTool>>()));
+            toolRepository.RegisterTool(new DirectoryListTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DirectoryListTool>>()));
+            toolRepository.RegisterTool(new DirectoryCreateTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DirectoryCreateTool>>()));
+            toolRepository.RegisterTool(new DirectoryDeleteTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DirectoryDeleteTool>>()));
+            toolRepository.RegisterTool(new DirectoryMoveTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DirectoryMoveTool>>()));
+            toolRepository.RegisterTool(new DirectoryCopyTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DirectoryCopyTool>>()));
+            toolRepository.RegisterTool(new FileReadTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileReadTool>>()));
+            toolRepository.RegisterTool(new FileWriteTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileWriteTool>>()));
+            toolRepository.RegisterTool(new FileCopyTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileCopyTool>>()));
+            toolRepository.RegisterTool(new FileMoveTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileMoveTool>>()));
+            toolRepository.RegisterTool(new FileDeleteTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileDeleteTool>>()));
+            toolRepository.RegisterTool(new FileAttributesTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileAttributesTool>>()));
+            toolRepository.RegisterTool(new DownloadTool(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DownloadTool>>(), httpClientFactory.CreateClient()));
             
             return toolRepository;
         });
 
         // Register strategic agent and its dependencies
+        // NOTE: System configured for PESSIMISTIC STRATEGY ONLY
+        // This ensures conservative, backend-focused execution for all queries
+        // with comprehensive validation and specific development guidance
         services.AddSingleton<ISessionFileSystem, Ollama.Infrastructure.Services.SessionFileSystem>();
         services.AddSingleton<IAgentStrategy, Ollama.Infrastructure.Strategies.PessimisticAgentStrategy>();
         services.AddSingleton<Ollama.Infrastructure.Agents.StrategicAgent>(provider =>

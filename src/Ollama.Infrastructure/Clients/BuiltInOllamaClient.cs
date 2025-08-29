@@ -28,7 +28,12 @@ public class BuiltInOllamaClient
             {
                 model = model,
                 messages = messages.Select(m => new { role = m.role, content = m.content }).ToArray(),
-                stream = false
+                stream = false,
+                options = new
+                {
+                    temperature = 0.1, // Lower temperature for more consistent formatting
+                    top_p = 0.9
+                }
             };
 
             var json = JsonSerializer.Serialize(requestPayload);
@@ -47,7 +52,7 @@ public class BuiltInOllamaClient
             }
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            _logger.LogDebug("Ollama response: {Response}", responseContent);
+            _logger.LogDebug("Ollama raw response content: {Response}", responseContent);
 
             // Parse the response to extract the message content
             var responseObject = JsonSerializer.Deserialize<JsonElement>(responseContent);
@@ -57,6 +62,7 @@ public class BuiltInOllamaClient
             {
                 var responseText = contentElement.GetString() ?? "";
                 _logger.LogInformation("Received response from Ollama: {Length} characters", responseText.Length);
+                _logger.LogDebug("Extracted message content: {Content}", responseText);
                 return responseText;
             }
 
@@ -66,6 +72,7 @@ public class BuiltInOllamaClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error communicating with Ollama API");
+            _logger.LogError("Request details - Model: {Model}, Messages count: {Count}", model, messages.Count);
             throw;
         }
     }

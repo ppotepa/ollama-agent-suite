@@ -66,7 +66,7 @@ public class SessionFileSystem : ISessionFileSystem
         if (relativePath == "..")
         {
             var parent = Directory.GetParent(currentDir);
-            if (parent != null && IsWithinSessionBoundary(parent.FullName, sessionRoot))
+            if (parent != null && ValidatePathIsWithinSessionBounds(parent.FullName, sessionRoot))
             {
                 var newCurrentDir = parent.FullName;
                 _sessionCurrentDirectories.AddOrUpdate(sessionId, newCurrentDir, (key, existing) => newCurrentDir);
@@ -91,7 +91,7 @@ public class SessionFileSystem : ISessionFileSystem
         var targetPath = Path.GetFullPath(Path.Combine(currentDir, relativePath));
         
         // Ensure the target path is within session boundaries
-        if (!IsWithinSessionBoundary(targetPath, sessionRoot))
+        if (!ValidatePathIsWithinSessionBounds(targetPath, sessionRoot))
         {
             throw new UnauthorizedAccessException($"Path '{relativePath}' would escape session boundary");
         }
@@ -456,6 +456,55 @@ public class SessionFileSystem : ISessionFileSystem
         return CalculateDirectorySize(sessionRoot);
     }
 
+    public bool IsWorkingDirectoryValid(string sessionId, string workingDirectory)
+    {
+        try
+        {
+            ValidateSessionId(sessionId);
+            var sessionRoot = GetSessionRoot(sessionId);
+            return ValidatePathIsWithinSessionBounds(workingDirectory, sessionRoot);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public string GetSafeWorkingDirectory(string sessionId)
+    {
+        ValidateSessionId(sessionId);
+        // Always return the session root for maximum security
+        // This ensures external commands can never escape the session boundary
+        var sessionRoot = GetSessionRoot(sessionId);
+        
+        // Ensure the session directory exists
+        if (!Directory.Exists(sessionRoot))
+        {
+            Directory.CreateDirectory(sessionRoot);
+            _logger.LogDebug("Created session root directory: {SessionRoot}", sessionRoot);
+        }
+        
+        // Log for security auditing
+        _logger.LogDebug("Session {SessionId}: Providing safe working directory: {WorkingDirectory}", 
+            sessionId, sessionRoot);
+        
+        return sessionRoot;
+    }
+
+    public bool IsWithinSessionBoundary(string sessionId, string path)
+    {
+        try
+        {
+            ValidateSessionId(sessionId);
+            var sessionRoot = GetSessionRoot(sessionId);
+            return ValidatePathIsWithinSessionBounds(path, sessionRoot);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public void CleanupSession(string sessionId)
     {
         ValidateSessionId(sessionId);
@@ -493,7 +542,7 @@ public class SessionFileSystem : ISessionFileSystem
 
         var fullPath = Path.GetFullPath(Path.Combine(currentDir, relativePath));
         
-        if (!IsWithinSessionBoundary(fullPath, sessionRoot))
+        if (!ValidatePathIsWithinSessionBounds(fullPath, sessionRoot))
         {
             throw new UnauthorizedAccessException($"Path '{relativePath}' would escape session boundary");
         }
@@ -501,12 +550,32 @@ public class SessionFileSystem : ISessionFileSystem
         return fullPath;
     }
 
-    private bool IsWithinSessionBoundary(string path, string sessionRoot)
+    private bool ValidatePathIsWithinSessionBounds(string path, string sessionRoot)
     {
         var normalizedPath = Path.GetFullPath(path);
         var normalizedRoot = Path.GetFullPath(sessionRoot);
         
-        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+        // Ensure the path starts with the session root and doesn't allow any escapes
+        bool isWithinBounds = normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+        
+        // Additional security check: ensure no directory traversal attempts
+        if (isWithinBounds)
+        {
+            // Check that the normalized path doesn't contain any ".." components after normalization
+            // This prevents crafted paths that might escape after normalization
+            var relativePath = Path.GetRelativePath(normalizedRoot, normalizedPath);
+            isWithinBounds = !relativePath.StartsWith(".." + Path.DirectorySeparatorChar) && 
+                           !relativePath.Contains(".." + Path.DirectorySeparatorChar) &&
+                           relativePath != "..";
+        }
+        
+        if (!isWithinBounds)
+        {
+            _logger.LogWarning("Session boundary violation detected: Path '{Path}' is outside session root '{SessionRoot}'", 
+                normalizedPath, normalizedRoot);
+        }
+        
+        return isWithinBounds;
     }
 
     private string GetRelativePathFromSessionRoot(string fullPath, string sessionRoot)
@@ -612,6 +681,42 @@ public class SessionFileSystem : ISessionFileSystem
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create base cache directory: {CacheDirectory}", _baseCacheDirectory);
+            throw;
+        }
+    }
+
+    public void ClearEntireCache()
+    {
+        try
+        {
+            if (Directory.Exists(_baseCacheDirectory))
+            {
+                _logger.LogInformation("Clearing entire cache directory: {CacheDirectory}", _baseCacheDirectory);
+                
+                // Clear all session directories
+                _sessionCurrentDirectories.Clear();
+                
+                // Delete all contents of the cache directory
+                var directoryInfo = new DirectoryInfo(_baseCacheDirectory);
+                foreach (var file in directoryInfo.GetFiles())
+                {
+                    file.Delete();
+                }
+                foreach (var dir in directoryInfo.GetDirectories())
+                {
+                    dir.Delete(true);
+                }
+                
+                _logger.LogInformation("Successfully cleared cache directory: {CacheDirectory}", _baseCacheDirectory);
+            }
+            else
+            {
+                _logger.LogInformation("Cache directory does not exist, nothing to clear: {CacheDirectory}", _baseCacheDirectory);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to clear cache directory: {CacheDirectory}", _baseCacheDirectory);
             throw;
         }
     }

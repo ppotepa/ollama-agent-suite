@@ -6,6 +6,7 @@ using Ollama.Bootstrap.Composition;
 using Ollama.Bootstrap.Configuration;
 using Ollama.Application.Orchestrator;
 using Ollama.Domain.Configuration;
+using Ollama.Domain.Services;
 using Ollama.Infrastructure.Services;
 using Ollama.Infrastructure.Clients;
 using Ollama.Infrastructure.Agents;
@@ -103,8 +104,8 @@ try
 
     // Parse command line arguments
     string? query = null;
-    string? planning = null;
     bool verbose = false;
+    bool clearCache = false; // New flag for -nc (no cache)
 
     Console.WriteLine("📋 Parsing command line arguments...");
 
@@ -119,37 +120,71 @@ try
             Console.WriteLine($"  Found query: {query}");
             i++; // Skip next argument since we consumed it
         }
-        else if (args[i] == "--planning" && i + 1 < args.Length)
-        {
-            planning = args[i + 1];
-            Console.WriteLine($"  Found planning: {planning}");
-            i++; // Skip next argument since we consumed it
-        }
         else if (args[i] == "--verbose")
         {
             verbose = true;
             Console.WriteLine($"  Found verbose flag");
         }
+        else if (args[i] == "-nc" || args[i] == "--no-cache")
+        {
+            clearCache = true;
+            Console.WriteLine($"  Found no-cache flag - cache will be cleared");
+        }
         else if (args[i] == "--help" || args[i] == "-h")
         {
+            Console.WriteLine("🤖 Ollama Agent Suite - Backend Development AI Assistant");
+            Console.WriteLine("====================================================");
             Console.WriteLine("Usage: Ollama.Interface.Cli [options]");
+            Console.WriteLine();
             Console.WriteLine("Options:");
             Console.WriteLine("  query <text>          The query to process");
-            Console.WriteLine("  --planning <type>     Specify the planning type (pessimistic)");
             Console.WriteLine("  --verbose             Enable verbose output");
+            Console.WriteLine("  -nc, --no-cache       Clear cache before running");
             Console.WriteLine("  --help, -h            Show this help message");
+            Console.WriteLine();
+            Console.WriteLine("Strategy Configuration:");
+            Console.WriteLine("  This system uses PESSIMISTIC STRATEGY EXCLUSIVELY for all queries.");
+            Console.WriteLine("  - Conservative, backend-focused approach");
+            Console.WriteLine("  - Provides specific development guidance");
+            Console.WriteLine("  - Extensive validation and risk assessment");
+            Console.WriteLine("  - No generic responses allowed");
+            Console.WriteLine();
+            Console.WriteLine("Examples:");
+            Console.WriteLine("  dotnet run -- query \"Create user authentication system\"");
+            Console.WriteLine("  dotnet run -- query \"Analyze this GitHub repository\" --verbose");
+            Console.WriteLine("  dotnet run -- query \"Download and examine code quality\" -nc");
             return 0;
         }
     }
 
-    Console.WriteLine($"📋 Parsed arguments - Query: '{query}', Planning: '{planning}', Verbose: {verbose}");
+    Console.WriteLine($"📋 Parsed arguments - Query: '{query}', Verbose: {verbose}, ClearCache: {clearCache}");
+
+    // Clear cache if -nc flag is specified
+    if (clearCache)
+    {
+        try
+        {
+            Console.WriteLine("🧹 No-cache flag specified - clearing cache...");
+            var sessionFileSystem = app.Services.GetRequiredService<ISessionFileSystem>();
+            sessionFileSystem.ClearEntireCache();
+            Console.WriteLine("✅ Cache cleared successfully");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️ Failed to clear cache: {ex.Message}");
+            logger?.LogWarning(ex, "Failed to clear cache on startup");
+        }
+    }
+    else
+    {
+        Console.WriteLine($"🏭 Cache preserved - use -nc flag to clear cache");
+    }
 
     // Use defaults if not provided
     query ??= "Hello world";
     var appSettings = app.Services.GetRequiredService<AppSettings>();
-    planning ??= "pessimistic";
 
-    Console.WriteLine($"📋 Final values - Query: '{query}', Planning: '{planning}'");
+    Console.WriteLine($"📋 Final values - Query: '{query}'");
 
     Console.WriteLine("🎯 Testing service resolution step by step...");
     
@@ -168,12 +203,14 @@ try
         Console.WriteLine("  ✅ StrategicAgent resolved");
 
         Console.WriteLine($"🤖 OllamaAgentSuite - Processing query: '{query}'");
-        Console.WriteLine($"📊 Planning: {planning}");
+        Console.WriteLine($"📊 Strategy: Pessimistic (Backend Development Focus)");
+        Console.WriteLine($"⚠️  System configured for PESSIMISTIC MODE ONLY");
+        Console.WriteLine($"💡 Expect: Conservative execution, specific backend guidance, comprehensive validation");
         
         Console.WriteLine("🔄 Executing query...");
         
-        // Always use StrategicAgent since we only have pessimistic strategy now
-        Console.WriteLine($"🧠 Using StrategicAgent with {planning} strategy...");
+        // Always use StrategicAgent with pessimistic strategy
+        Console.WriteLine($"🧠 Using StrategicAgent with pessimistic strategy...");
         
         var sessionId = Guid.NewGuid().ToString();
         
@@ -196,7 +233,7 @@ try
         var session = new Dictionary<string, object>
         {
             ["sessionId"] = sessionId,
-            ["strategy"] = $"Strategic ({planning})",
+            ["strategy"] = "Strategic (Pessimistic)",
             ["response"] = response,
             ["query"] = query,
             ["timestamp"] = DateTime.UtcNow
@@ -206,7 +243,7 @@ try
         session = new Dictionary<string, object>
         {
             ["sessionId"] = sessionId,
-            ["strategy"] = $"Strategic ({planning})",
+            ["strategy"] = "Strategic (Pessimistic)",
             ["response"] = response,
             ["query"] = query,
             ["timestamp"] = DateTime.UtcNow

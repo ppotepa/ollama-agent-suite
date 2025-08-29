@@ -1,51 +1,80 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Services;
+using Microsoft.Extensions.Logging;
 using System.IO;
 
 namespace Ollama.Infrastructure.Tools
 {
-    public class FileSystemAnalyzer : ITool
+    public class FileSystemAnalyzer : AbstractTool
     {
-        public string Name => "FileSystemAnalyzer";
-        public string Description => "Analyzes file system structure, file types, and sizes";
-        public IEnumerable<string> Capabilities => new[] { "fs:analyze", "repo:structure" };
-        public bool RequiresNetwork => false;
-        public bool RequiresFileSystem => true;
+        public FileSystemAnalyzer(ISessionScope sessionScope, ILogger<FileSystemAnalyzer> logger) : base(sessionScope, logger)
+        {
+        }
+        
+        public override string Name => "FileSystemAnalyzer";
+        public override string Description => "Analyzes file system structure, file types, and sizes";
+        public override IEnumerable<string> Capabilities => new[] { "fs:analyze", "repo:structure" };
+        public override bool RequiresNetwork => false;
+        public override bool RequiresFileSystem => true;
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             return Task.FromResult(context.State.ContainsKey("repoPath") || context.Parameters.ContainsKey("path"));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.0m);
         }
 
-        public async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             
-            string? path;
-            if (context.State.TryGetValue("repoPath", out var repoPathObj))
-            {
-                path = repoPathObj?.ToString();
-            }
-            else if (context.Parameters.TryGetValue("path", out var pathObj))
-            {
-                path = pathObj?.ToString();
-            }
-            else
-            {
-                return new ToolResult
-                {
-                    Success = false,
-                    ErrorMessage = "No path provided for analysis",
-                    ExecutionTime = DateTime.Now - startTime
-                };
-            }
-
             try
             {
+                // Ensure SessionScope is initialized with correct sessionId from context
+                EnsureSessionScopeInitialized(context);
+                
+                Logger.LogInformation("FileSystemAnalyzer: Starting file system analysis");
+                
+                // Validate session context
+                if (string.IsNullOrEmpty(context.SessionId))
+                {
+                    return new ToolResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Session ID is required for file system analysis",
+                        ExecutionTime = DateTime.Now - startTime
+                    };
+                }
+                
+                string? path;
+                if (context.State.TryGetValue("repoPath", out var repoPathObj))
+                {
+                    path = repoPathObj?.ToString();
+                }
+                else if (context.Parameters.TryGetValue("path", out var pathObj))
+                {
+                    path = pathObj?.ToString();
+                }
+                else
+                {
+                    // Use session working directory if no path provided
+                    path = SessionScope.FileSystem.GetCurrentDirectory(context.SessionId);
+                }
+
+                // Validate path is within session boundaries
+                if (!SessionScope.FileSystem.IsWithinSessionBoundary(context.SessionId, path!))
+                {
+                    return new ToolResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"Path '{path}' is outside session boundaries",
+                        ExecutionTime = DateTime.Now - startTime
+                    };
+                }
+
                 var directoryInfo = new DirectoryInfo(path!);
                 if (!directoryInfo.Exists)
                 {
@@ -71,6 +100,7 @@ namespace Ollama.Infrastructure.Tools
             }
             catch (Exception ex)
             {
+                Logger.LogError(ex, "FileSystemAnalyzer: Error analyzing directory");
                 return new ToolResult
                 {
                     Success = false,
@@ -115,7 +145,7 @@ namespace Ollama.Infrastructure.Tools
                 {
                     try
                     {
-                        var content = File.ReadAllText(file.FullName);
+                        var content = System.IO.File.ReadAllText(file.FullName);
                         stats.FileSamples.Add(new FileSample
                         {
                             Name = file.Name,

@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Services;
 using System.Diagnostics;
 using System.Text;
 
@@ -7,14 +8,22 @@ namespace Ollama.Infrastructure.Tools
     /// <summary>
     /// Executes external command-line tools as a fallback mechanism when other tools fail.
     /// Used primarily for retry scenarios with commands like git clone, curl, wget, etc.
+    /// SECURITY: All commands are executed within session boundaries and cannot escape.
     /// </summary>
     public class ExternalCommandExecutor : ITool
     {
+        private readonly ISessionFileSystem _sessionFileSystem;
+
         public string Name => "ExternalCommandExecutor";
-        public string Description => "Executes external command-line tools for system operations, primarily as fallback mechanisms";
+        public string Description => "Executes external command-line tools for system operations, primarily as fallback mechanisms (session-isolated)";
         public IEnumerable<string> Capabilities => new[] { "command:execute", "system:external", "fallback:operations" };
         public bool RequiresNetwork => false; // Depends on the command being executed
         public bool RequiresFileSystem => true;
+
+        public ExternalCommandExecutor(ISessionFileSystem sessionFileSystem)
+        {
+            _sessionFileSystem = sessionFileSystem;
+        }
 
         public Task<bool> DryRunAsync(ToolContext context)
         {
@@ -42,11 +51,43 @@ namespace Ollama.Infrastructure.Tools
                     };
                 }
 
+                // Validate session context
+                if (string.IsNullOrEmpty(context.SessionId))
+                {
+                    return new ToolResult
+                    {
+                        Success = false,
+                        Output = "Session ID is required for external command execution",
+                        ExecutionTime = DateTime.Now - startTime
+                    };
+                }
+
                 // Extract optional parameters
-                var workingDirectory = context.Parameters.TryGetValue("workingDirectory", out var wdObj) ? wdObj?.ToString() : null;
+                var requestedWorkingDirectory = context.Parameters.TryGetValue("workingDirectory", out var wdObj) ? wdObj?.ToString() : null;
                 var timeoutSeconds = context.Parameters.TryGetValue("timeoutSeconds", out var timeoutObj) 
                     ? (timeoutObj is int timeout ? timeout : 30) 
                     : 30;
+
+                // Validate and get safe working directory
+                string workingDirectory;
+                if (!string.IsNullOrEmpty(requestedWorkingDirectory))
+                {
+                    if (!_sessionFileSystem.IsWorkingDirectoryValid(context.SessionId, requestedWorkingDirectory))
+                    {
+                        return new ToolResult
+                        {
+                            Success = false,
+                            Output = $"Working directory '{requestedWorkingDirectory}' is outside session boundaries",
+                            ExecutionTime = DateTime.Now - startTime
+                        };
+                    }
+                    workingDirectory = requestedWorkingDirectory;
+                }
+                else
+                {
+                    // Use session-safe working directory
+                    workingDirectory = _sessionFileSystem.GetSafeWorkingDirectory(context.SessionId);
+                }
 
                 var result = await ExecuteCommandAsync(command, workingDirectory, timeoutSeconds, cancellationToken);
                 

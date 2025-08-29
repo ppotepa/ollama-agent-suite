@@ -9,8 +9,22 @@ using Ollama.Infrastructure.Tools;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text;
 
 namespace Ollama.Infrastructure.Agents;
+
+public class ConversationEntry
+{
+    public string Role { get; set; } = "";
+    public string Content { get; set; } = "";
+    public DateTime Timestamp { get; set; }
+    public string? ToolName { get; set; }
+    public Dictionary<string, string>? ToolParameters { get; set; }
+    public string? RawResponse { get; set; }
+    public string? ValidatedResponse { get; set; }
+    public bool IsToolResponse { get; set; }
+    public int MessageIndex { get; set; }
+}
 
 /// <summary>
 /// Strategic agent that operates based on a configurable strategy
@@ -25,7 +39,7 @@ public class StrategicAgent : IAgent
     private readonly ILLMCommunicationService _communicationService;
     private readonly ILogger<StrategicAgent> _logger;
     private readonly string _model;
-    private readonly ConcurrentDictionary<string, List<(string role, string content)>> _conversations = new();
+    private readonly ConcurrentDictionary<string, List<ConversationEntry>> _conversations = new();
     private readonly Dictionary<string, string> _availableCommands = new();
     private readonly ExternalCommandDetector _commandDetector;
 
@@ -98,10 +112,24 @@ public class StrategicAgent : IAgent
             // Initialize conversation if needed
             if (!_conversations.ContainsKey(sessionId))
             {
-                var initialPrompt = _strategy.GetInitialPrompt();
-                _conversations[sessionId] = new List<(string role, string content)>
+                string initialPrompt;
+                if (_strategy is Ollama.Infrastructure.Strategies.PessimisticAgentStrategy pessimistic)
                 {
-                    ("system", initialPrompt)
+                    initialPrompt = await pessimistic.GetInitialPromptWithDynamicToolsAsync(_toolRepository);
+                }
+                else
+                {
+                    initialPrompt = _strategy.GetInitialPrompt();
+                }
+                _conversations[sessionId] = new List<ConversationEntry>
+                {
+                    new ConversationEntry 
+                    { 
+                        Role = "system", 
+                        Content = initialPrompt, 
+                        Timestamp = DateTime.UtcNow, 
+                        MessageIndex = 0 
+                    }
                 };
                 
                 // Log the initial system prompt for debugging and transparency
@@ -117,7 +145,7 @@ public class StrategicAgent : IAgent
 
             // Format user query according to strategy
             var formattedPrompt = _strategy.FormatQueryPrompt(prompt, sessionId);
-            _conversations[sessionId].Add(("user", formattedPrompt));
+            AddConversationEntry(sessionId, "user", formattedPrompt);
 
             // Log the interaction
             _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_query.txt", 
@@ -125,60 +153,114 @@ public class StrategicAgent : IAgent
 
             // Call actual LLM using BuiltInOllamaClient
             var llmResponse = await CallLLMAsync(formattedPrompt, sessionId);
-            _conversations[sessionId].Add(("assistant", llmResponse));
+            
+            _logger.LogDebug("Session {SessionId}: Raw LLM response length: {Length} chars", sessionId, llmResponse?.Length ?? 0);
+            _logger.LogDebug("Session {SessionId}: Raw LLM response content: {Response}", sessionId, llmResponse);
 
             // Validate response according to strategy
-            var validatedResponse = _strategy.ValidateResponse(llmResponse, sessionId);
+            var validatedResponse = _strategy.ValidateResponse(llmResponse ?? "", sessionId);
+            
+            // Add assistant response to conversation with both raw and validated content
+            AddConversationEntry(sessionId, "assistant", validatedResponse ?? "", 
+                rawResponse: llmResponse, validatedResponse: validatedResponse);
+            
+            _logger.LogDebug("Session {SessionId}: Validated response length: {Length} chars", sessionId, validatedResponse?.Length ?? 0);
+            _logger.LogDebug("Session {SessionId}: Validated response content: {Response}", sessionId, validatedResponse);
             
             // Log the response
             _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_response.txt", 
                 $"Raw LLM Response: {llmResponse}\nValidated Response: {validatedResponse}\n");
 
-            // Check if we need to use any tools
-            var toolRequest = _strategy.ExtractToolRequest(validatedResponse);
-            if (toolRequest.HasValue)
+            // Iterative execution loop - "joggle back and forth" until task is complete
+            var maxIterations = 10; // Prevent infinite loops
+            var iteration = 0;
+            var isComplete = false;
+            
+            while (!isComplete && iteration < maxIterations)
             {
-                var (toolName, parameters) = toolRequest.Value;
-                _logger.LogInformation("Session {SessionId}: Tool requested: {Tool} with parameters: {Parameters}", 
-                    sessionId, toolName, string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}")));
+                iteration++;
+                _logger.LogInformation("Session {SessionId}: Starting iteration {Iteration}", sessionId, iteration);
+                
+                // Check if we need to use any tools
+                var toolRequest = _strategy.ExtractToolRequest(validatedResponse ?? "");
+                if (toolRequest.HasValue)
+                {
+                    var (toolName, parameters) = toolRequest.Value;
+                    _logger.LogInformation("Session {SessionId}: Tool requested: {Tool} with parameters: {Parameters}", 
+                        sessionId, toolName, string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}")));
 
-                // Execute the tool within the session context
-                var toolResponse = ExecuteTool(toolName, parameters, sessionId);
+                    // Execute the tool within the session context
+                    var toolResponse = ExecuteTool(toolName, parameters, sessionId);
+                    
+                    // Format tool response for LLM
+                    var formattedToolResponse = _strategy.FormatToolResponse(toolName, toolResponse);
+                    AddConversationEntry(sessionId, "user", formattedToolResponse, 
+                        toolName: toolName, toolParameters: parameters, isToolResponse: true);
+                    
+                    // Log tool execution
+                    _sessionFileSystem.WriteFile(sessionId, $"tools/{DateTime.UtcNow:yyyyMMdd_HHmmss}_{toolName}_iter{iteration}.txt", 
+                        $"Iteration: {iteration}\nTool: {toolName}\nParameters: {string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}"))}\nResponse: {toolResponse}\n");
+                    
+                    // Continue conversation - get next response after tool execution
+                    var continuationResponse = ContinueConversation(sessionId, toolResponse);
+                    validatedResponse = continuationResponse;
+                }
+
+                // Check if task is complete after this iteration
+                isComplete = _strategy.IsTaskComplete(validatedResponse ?? "");
+                _logger.LogInformation("Session {SessionId}: Iteration {Iteration} - Task complete: {IsComplete}", 
+                    sessionId, iteration, isComplete);
+
+                if (!isComplete)
+                {
+                    var nextStep = _strategy.GetNextStep(validatedResponse ?? "");
+                    _logger.LogInformation("Session {SessionId}: Iteration {Iteration} - Next step: {NextStep}", 
+                        sessionId, iteration, nextStep);
+                    
+                    _sessionFileSystem.WriteFile(sessionId, "next_steps.txt", 
+                        $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} [Iteration {iteration}]: {nextStep}\n");
+                        
+                    // If we haven't used a tool in this iteration but task is not complete,
+                    // we need to get another LLM response to continue the conversation
+                    if (!toolRequest.HasValue)
+                    {
+                        var continuePrompt = "Please continue working on the task. " + nextStep;
+                        var nextLlmResponse = await CallLLMAsync(continuePrompt, sessionId);
+                        validatedResponse = _strategy.ValidateResponse(nextLlmResponse ?? "", sessionId);
+                        AddConversationEntry(sessionId, "assistant", validatedResponse ?? "", 
+                            rawResponse: nextLlmResponse, validatedResponse: validatedResponse);
+                    }
+                }
                 
-                // Format tool response for LLM
-                var formattedToolResponse = _strategy.FormatToolResponse(toolName, toolResponse);
-                _conversations[sessionId].Add(("user", formattedToolResponse));
-                
-                // Log tool execution
-                _sessionFileSystem.WriteFile(sessionId, $"tools/{DateTime.UtcNow:yyyyMMdd_HHmmss}_{toolName}.txt", 
-                    $"Tool: {toolName}\nParameters: {string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}"))}\nResponse: {toolResponse}\n");
-                
-                // Continue conversation - get next response after tool execution
-                var continuationResponse = ContinueConversation(sessionId, toolResponse);
-                validatedResponse = continuationResponse;
+                // Save state after each iteration
+                SaveConversationState(sessionId);
+            }
+            
+            if (iteration >= maxIterations)
+            {
+                _logger.LogWarning("Session {SessionId}: Reached maximum iterations ({MaxIterations}) without task completion", 
+                    sessionId, maxIterations);
+                _sessionFileSystem.WriteFile(sessionId, "max_iterations_reached.txt", 
+                    $"Reached maximum iterations ({maxIterations}) at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}\nLast response: {validatedResponse}\n");
             }
 
-            // Save conversation state
-            SaveConversationState(sessionId);
+            // Generate final session summary
+            GenerateSessionSummary(sessionId);
 
-            // Check if task is complete
-            var isComplete = _strategy.IsTaskComplete(validatedResponse);
-            _logger.LogInformation("Session {SessionId}: Task complete: {IsComplete}", sessionId, isComplete);
-
-            if (!isComplete)
-            {
-                var nextStep = _strategy.GetNextStep(validatedResponse);
-                _logger.LogInformation("Session {SessionId}: Next step: {NextStep}", sessionId, nextStep);
-                
-                _sessionFileSystem.WriteFile(sessionId, "next_steps.txt", 
-                    $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}: {nextStep}\n");
-            }
-
-            return validatedResponse;
+            return validatedResponse ?? "";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Session {SessionId}: Error in Answer method", sessionId);
+            _logger.LogError("Exception details for session {SessionId}: {ExceptionType} - {Message}", 
+                sessionId, ex.GetType().Name, ex.Message);
+            
+            // Save conversation state even on error to preserve what we have
+            if (!string.IsNullOrEmpty(sessionId))
+            {
+                SaveConversationState(sessionId);
+            }
+            
             return _strategy.HandleError(ex.Message, "Answer");
         }
     }
@@ -331,21 +413,127 @@ public class StrategicAgent : IAgent
         return System.Text.Json.JsonSerializer.Serialize(context, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
     }
 
+    private void AddConversationEntry(string sessionId, string role, string content, 
+        string? toolName = null, Dictionary<string, string>? toolParameters = null, 
+        string? rawResponse = null, string? validatedResponse = null, bool isToolResponse = false)
+    {
+        var entry = new ConversationEntry
+        {
+            Role = role,
+            Content = content,
+            Timestamp = DateTime.UtcNow,
+            ToolName = toolName,
+            ToolParameters = toolParameters,
+            RawResponse = rawResponse,
+            ValidatedResponse = validatedResponse,
+            IsToolResponse = isToolResponse,
+            MessageIndex = _conversations[sessionId].Count
+        };
+        
+        _conversations[sessionId].Add(entry);
+        
+        // Save conversation after each message for comprehensive logging
+        SaveConversationState(sessionId);
+        
+        _logger.LogDebug("Session {SessionId}: Added conversation entry #{Index} - {Role}: {ContentLength} chars", 
+            sessionId, entry.MessageIndex, role, content.Length);
+    }
+
     private void SaveConversationState(string sessionId)
     {
         try
         {
             if (_conversations.TryGetValue(sessionId, out var conversation))
             {
-                var conversationJson = System.Text.Json.JsonSerializer.Serialize(conversation, 
+                // Create comprehensive conversation metadata
+                var conversationData = new
+                {
+                    SessionId = sessionId,
+                    Strategy = _strategy.Name,
+                    Model = _model,
+                    StartTime = conversation.FirstOrDefault()?.Timestamp ?? DateTime.UtcNow,
+                    LastUpdate = DateTime.UtcNow,
+                    MessageCount = conversation.Count,
+                    UserMessages = conversation.Count(c => c.Role == "user"),
+                    AssistantMessages = conversation.Count(c => c.Role == "assistant"),
+                    ToolMessages = conversation.Count(c => c.IsToolResponse),
+                    ToolsUsed = conversation.Where(c => !string.IsNullOrEmpty(c.ToolName))
+                                           .Select(c => c.ToolName)
+                                           .Distinct()
+                                           .ToList(),
+                    TotalContentLength = conversation.Sum(c => c.Content?.Length ?? 0),
+                    Messages = conversation
+                };
+
+                var conversationJson = System.Text.Json.JsonSerializer.Serialize(conversationData, 
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 
                 _sessionFileSystem.WriteFile(sessionId, "conversation_history.json", conversationJson);
+                
+                _logger.LogDebug("Session {SessionId}: Saved conversation state - {MessageCount} messages, {ContentLength} chars total", 
+                    sessionId, conversation.Count, conversationData.TotalContentLength);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Session {SessionId}: Failed to save conversation state", sessionId);
+        }
+    }
+
+    private void GenerateSessionSummary(string sessionId)
+    {
+        try
+        {
+            if (_conversations.TryGetValue(sessionId, out var conversation))
+            {
+                var summary = new
+                {
+                    SessionId = sessionId,
+                    CompletedAt = DateTime.UtcNow,
+                    Strategy = _strategy.Name,
+                    Model = _model,
+                    SessionDuration = conversation.LastOrDefault()?.Timestamp.Subtract(conversation.FirstOrDefault()?.Timestamp ?? DateTime.UtcNow).TotalMinutes ?? 0,
+                    Statistics = new
+                    {
+                        TotalMessages = conversation.Count,
+                        UserMessages = conversation.Count(c => c.Role == "user"),
+                        AssistantMessages = conversation.Count(c => c.Role == "assistant"),
+                        SystemMessages = conversation.Count(c => c.Role == "system"),
+                        ToolExecutions = conversation.Count(c => c.IsToolResponse),
+                        UniqueToolsUsed = conversation.Where(c => !string.IsNullOrEmpty(c.ToolName))
+                                                   .Select(c => c.ToolName)
+                                                   .Distinct()
+                                                   .Count(),
+                        TotalContentLength = conversation.Sum(c => c.Content?.Length ?? 0),
+                        AverageMessageLength = conversation.Count > 0 ? conversation.Average(c => c.Content?.Length ?? 0) : 0
+                    },
+                    ToolsUsed = conversation.Where(c => !string.IsNullOrEmpty(c.ToolName))
+                                           .GroupBy(c => c.ToolName)
+                                           .Select(g => new { Tool = g.Key, UsageCount = g.Count() })
+                                           .ToList(),
+                    MessageTimeline = conversation.Select(c => new
+                    {
+                        Index = c.MessageIndex,
+                        Timestamp = c.Timestamp,
+                        Role = c.Role,
+                        ContentLength = c.Content?.Length ?? 0,
+                        ToolName = c.ToolName,
+                        IsToolResponse = c.IsToolResponse
+                    }).ToList()
+                };
+
+                var summaryJson = System.Text.Json.JsonSerializer.Serialize(summary, 
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                
+                _sessionFileSystem.WriteFile(sessionId, "session_summary.json", summaryJson);
+                
+                _logger.LogInformation("Session {SessionId}: Generated comprehensive session summary - {TotalMessages} messages, {Duration:F2} minutes", 
+                    sessionId, summary.Statistics.TotalMessages, summary.SessionDuration);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Failed to generate session summary", sessionId);
         }
     }
 
@@ -361,6 +549,12 @@ public class StrategicAgent : IAgent
                 _logger.LogInformation("Session {SessionId}: Executing tool {Tool} (attempt {Retry}/{MaxRetries})", 
                     sessionId, toolName, retryCount + 1, maxRetries);
                 
+                // Handle MISSING_TOOL requests with reflection-based tool discovery
+                if (toolName.Equals("MISSING_TOOL", StringComparison.OrdinalIgnoreCase))
+                {
+                    return HandleMissingToolRequest(sessionId, parameters);
+                }
+                
                 // Get the tool from the repository
                 var tool = _toolRepository.GetToolByName(toolName);
                 if (tool == null)
@@ -373,7 +567,8 @@ public class StrategicAgent : IAgent
                 // Create execution context for the tool
                 var context = new ToolContext
                 {
-                    WorkingDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId)
+                    WorkingDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId),
+                    SessionId = sessionId
                 };
 
                 // Add parameters to context
@@ -551,15 +746,18 @@ public class StrategicAgent : IAgent
             var conversation = _conversations[sessionId];
             
             // Log the full conversation context being sent to LLM
-            var conversationLog = string.Join("\n---\n", conversation.Select(msg => $"{msg.role.ToUpper()}:\n{msg.content}"));
+            var conversationLog = string.Join("\n---\n", conversation.Select(msg => $"{msg.Role.ToUpper()}:\n{msg.Content}"));
             _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_conversation_context.txt", 
                 $"Full Conversation Context sent to LLM:\n{conversationLog}\n");
             
             _logger.LogInformation("Session {SessionId}: Calling LLM with model {Model}", sessionId, _model);
             _logger.LogDebug("Session {SessionId}: Sending {MessageCount} messages to LLM", sessionId, conversation.Count);
             
+            // Convert ConversationEntry to tuple format for Ollama client
+            var ollamaConversation = conversation.Select(msg => (msg.Role, msg.Content)).ToList();
+            
             // Call the Ollama API with the full conversation history
-            var response = await _ollamaClient.ChatAsync(_model, conversation);
+            var response = await _ollamaClient.ChatAsync(_model, ollamaConversation);
             
             _logger.LogInformation("Session {SessionId}: Received LLM response ({Length} chars)", 
                 sessionId, response.Length);
@@ -659,7 +857,7 @@ public class StrategicAgent : IAgent
             
             // Get the next response from actual LLM
             var nextResponse = CallLLMAsync(accomplishmentMessage, sessionId).GetAwaiter().GetResult();
-            _conversations[sessionId].Add(("assistant", nextResponse));
+            AddConversationEntry(sessionId, "assistant", nextResponse);
             
             // Log the continuation
             _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_continuation.txt", 
@@ -980,6 +1178,147 @@ Please analyze this request and provide your response in the required JSON schem
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to save interaction history for session {SessionId}", sessionId);
+        }
+    }
+
+    private string HandleMissingToolRequest(string sessionId, Dictionary<string, string> parameters)
+    {
+        try
+        {
+            _logger.LogInformation("Session {SessionId}: Processing MISSING_TOOL request with reflection", sessionId);
+
+            // Extract required capabilities from parameters
+            var requiredCapabilities = new List<string>();
+            var requiredToolName = "UnknownTool";
+            var reason = "Tool capability requested";
+            var sessionSafetyRequirements = "";
+
+            if (parameters.TryGetValue("requiredCapabilities", out var capabilitiesStr))
+            {
+                // Parse string representation of array, e.g., ["folder:create", "directory:analyze"]
+                capabilitiesStr = capabilitiesStr.Trim('[', ']');
+                requiredCapabilities = capabilitiesStr.Split(',')
+                    .Select(s => s.Trim().Trim('"'))
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .ToList();
+            }
+
+            if (parameters.TryGetValue("requiredToolName", out var toolNameStr))
+            {
+                requiredToolName = toolNameStr ?? "UnknownTool";
+            }
+
+            if (parameters.TryGetValue("reason", out var reasonStr))
+            {
+                reason = reasonStr ?? "Tool capability requested";
+            }
+
+            if (parameters.TryGetValue("sessionSafetyRequirements", out var safetyStr))
+            {
+                sessionSafetyRequirements = safetyStr ?? "";
+            }
+
+            // Use reflection to find tools with matching capabilities
+            var matchingTools = new List<(ITool tool, List<string> matchedCapabilities)>();
+            
+            foreach (var capability in requiredCapabilities)
+            {
+                var toolsWithCapability = _toolRepository.FindToolsByCapability(capability);
+                foreach (var tool in toolsWithCapability)
+                {
+                    var existing = matchingTools.FirstOrDefault(t => t.tool.Name == tool.Name);
+                    if (existing.tool != null)
+                    {
+                        existing.matchedCapabilities.Add(capability);
+                    }
+                    else
+                    {
+                        matchingTools.Add((tool, new List<string> { capability }));
+                    }
+                }
+            }
+
+            // Build response with discovered tools
+            var response = new StringBuilder();
+            response.AppendLine($"MISSING TOOL ANALYSIS - Reflection-Based Discovery:");
+            response.AppendLine($"==================================================");
+            response.AppendLine($"Requested Tool: {requiredToolName}");
+            response.AppendLine($"Required Capabilities: {string.Join(", ", requiredCapabilities)}");
+            response.AppendLine($"Reason: {reason}");
+            response.AppendLine($"Session Safety: {sessionSafetyRequirements}");
+            response.AppendLine();
+
+            if (matchingTools.Any())
+            {
+                response.AppendLine("✅ COMPATIBLE TOOLS FOUND via reflection:");
+                response.AppendLine("========================================");
+                
+                foreach (var (tool, matchedCapabilities) in matchingTools)
+                {
+                    response.AppendLine($"• {tool.Name}:");
+                    response.AppendLine($"  - Description: {tool.Description}");
+                    response.AppendLine($"  - Matched Capabilities: {string.Join(", ", matchedCapabilities)}");
+                    response.AppendLine($"  - All Capabilities: {string.Join(", ", tool.Capabilities)}");
+                    response.AppendLine($"  - Session Safe: {(tool.RequiresFileSystem ? "Yes (session-isolated)" : "Yes (no file system)")}");
+                    response.AppendLine($"  - Usage: Use '{tool.Name}' tool to access these capabilities");
+                    response.AppendLine();
+                }
+
+                response.AppendLine("RECOMMENDATION:");
+                response.AppendLine("===============");
+                
+                if (requiredCapabilities.Count == 1)
+                {
+                    var bestMatch = matchingTools
+                        .OrderByDescending(t => t.matchedCapabilities.Count)
+                        .First();
+                    response.AppendLine($"Use '{bestMatch.tool.Name}' tool for '{requiredCapabilities[0]}' capability.");
+                }
+                else
+                {
+                    response.AppendLine("Multiple tools needed for all capabilities:");
+                    foreach (var capability in requiredCapabilities)
+                    {
+                        var toolForCapability = matchingTools
+                            .FirstOrDefault(t => t.matchedCapabilities.Contains(capability));
+                        if (toolForCapability.tool != null)
+                        {
+                            response.AppendLine($"- Use '{toolForCapability.tool.Name}' for '{capability}'");
+                        }
+                        else
+                        {
+                            response.AppendLine($"- ⚠️ No tool found for '{capability}'");
+                        }
+                    }
+                }
+            }
+            else
+            {
+                response.AppendLine("❌ NO COMPATIBLE TOOLS FOUND:");
+                response.AppendLine("==============================");
+                response.AppendLine("The requested capabilities are not available in the current tool repository.");
+                response.AppendLine("Available tools and their capabilities:");
+                
+                var allTools = _toolRepository.GetAllTools();
+                foreach (var tool in allTools)
+                {
+                    response.AppendLine($"• {tool.Name}: {string.Join(", ", tool.Capabilities)}");
+                }
+                
+                response.AppendLine();
+                response.AppendLine("SUGGESTION: The requested functionality may need to be implemented as a new tool.");
+            }
+
+            var result = response.ToString();
+            _logger.LogInformation("Session {SessionId}: MISSING_TOOL analysis completed, found {Count} compatible tools", 
+                sessionId, matchingTools.Count);
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Error processing MISSING_TOOL request", sessionId);
+            return $"Error processing MISSING_TOOL request: {ex.Message}";
         }
     }
 }

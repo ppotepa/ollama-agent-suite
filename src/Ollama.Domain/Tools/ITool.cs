@@ -23,6 +23,7 @@ namespace Ollama.Domain.Tools
         public IDictionary<string, object> Parameters { get; } = new Dictionary<string, object>();
         public IDictionary<string, object> State { get; } = new Dictionary<string, object>();
         public string? WorkingDirectory { get; set; }
+        public string? SessionId { get; set; }
     }
 
     public class ToolResult

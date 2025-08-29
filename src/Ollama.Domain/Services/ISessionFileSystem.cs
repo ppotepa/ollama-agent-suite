@@ -164,8 +164,36 @@ public interface ISessionFileSystem
     long GetSessionDirectorySize(string sessionId);
 
     /// <summary>
+    /// Validate that a working directory is within session boundaries
+    /// </summary>
+    /// <param name="sessionId">Session identifier</param>
+    /// <param name="workingDirectory">Working directory to validate</param>
+    /// <returns>True if directory is within session boundaries</returns>
+    bool IsWorkingDirectoryValid(string sessionId, string workingDirectory);
+
+    /// <summary>
+    /// Check if the specified path is within session boundaries
+    /// </summary>
+    /// <param name="sessionId">Session identifier</param>
+    /// <param name="path">Path to validate</param>
+    /// <returns>True if path is within session boundaries</returns>
+    bool IsWithinSessionBoundary(string sessionId, string path);
+
+    /// <summary>
+    /// Get a safe working directory for external commands - always returns session root
+    /// </summary>
+    /// <param name="sessionId">Session identifier</param>
+    /// <returns>Safe working directory within session boundaries</returns>
+    string GetSafeWorkingDirectory(string sessionId);
+
+    /// <summary>
     /// Clean up session directory
     /// </summary>
     /// <param name="sessionId">Session identifier</param>
     void CleanupSession(string sessionId);
+
+    /// <summary>
+    /// Clear the entire cache directory (useful for development mode)
+    /// </summary>
+    void ClearEntireCache();
 }

@@ -1,0 +1,9 @@
+{
+  "query": "what is 2+2?",
+  "mockResponse": {
+    "taskCompleted": true,
+    "nextStep": null,
+    "response": "The answer to 2+2 is 4. This is a basic arithmetic operation.",
+    "confidence": 0.9
+  }
+}

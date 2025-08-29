@@ -129,11 +129,55 @@ public class LLMCommunicationService : ILLMCommunicationService
         return Task.FromResult(mockResponse);
     }
 
+    /// <summary>
+    /// Extracts the JSON portion from an LLM response that may contain additional content
+    /// </summary>
+    private string ExtractJsonFromResponse(string response)
+    {
+        if (string.IsNullOrEmpty(response))
+            return response;
+
+        // Look for the first opening brace
+        var startIndex = response.IndexOf('{');
+        if (startIndex == -1)
+            return response; // No JSON found, return as-is
+
+        // Count braces to find the matching closing brace
+        var braceCount = 0;
+        var endIndex = -1;
+        
+        for (int i = startIndex; i < response.Length; i++)
+        {
+            if (response[i] == '{')
+                braceCount++;
+            else if (response[i] == '}')
+                braceCount--;
+                
+            if (braceCount == 0)
+            {
+                endIndex = i;
+                break;
+            }
+        }
+        
+        if (endIndex == -1)
+            return response; // No matching closing brace found
+            
+        var jsonPortion = response.Substring(startIndex, endIndex - startIndex + 1);
+        _logger.LogDebug("Extracted JSON from response. Original length: {OriginalLength}, JSON length: {JsonLength}", 
+            response.Length, jsonPortion.Length);
+            
+        return jsonPortion;
+    }
+
     public LLMResponseSchema ParseResponseSchema(string jsonResponse)
     {
         try
         {
-            var response = JsonSerializer.Deserialize<LLMResponseSchema>(jsonResponse, _jsonOptions);
+            // Extract only the JSON portion from the response
+            var cleanJsonResponse = ExtractJsonFromResponse(jsonResponse);
+            
+            var response = JsonSerializer.Deserialize<LLMResponseSchema>(cleanJsonResponse, _jsonOptions);
             if (response == null)
             {
                 _logger.LogWarning("Failed to deserialize LLM response - null result");

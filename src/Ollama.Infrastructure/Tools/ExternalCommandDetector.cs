@@ -68,7 +68,17 @@ public class ExternalCommandDetector
             }
         });
 
-        await Task.WhenAll(tasks);
+        try
+        {
+            // Add a timeout for the entire detection process
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await Task.WhenAll(tasks).WaitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Some commands timed out, but we'll return what we detected so far
+        }
+        
         return new Dictionary<string, string>(_availableCommands);
     }
 
@@ -89,8 +99,19 @@ public class ExternalCommandDetector
             using var process = Process.Start(processInfo);
             if (process == null) return false;
 
-            await process.WaitForExitAsync();
-            return process.ExitCode == 0;
+            // Use a timeout to prevent hanging
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+                return process.ExitCode == 0;
+            }
+            catch (OperationCanceledException)
+            {
+                // Kill the process if it times out
+                try { process.Kill(); } catch { }
+                return false;
+            }
         }
         catch
         {
