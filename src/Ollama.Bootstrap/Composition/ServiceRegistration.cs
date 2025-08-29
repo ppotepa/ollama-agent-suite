@@ -82,17 +82,18 @@ public static class ServiceRegistration
             
             var toolRepository = new ToolRepository(logger);
             
-            // Register legacy tools (NOTE: These will be converted to AbstractTool-based implementations)
-            toolRepository.RegisterTool(new MathEvaluator());
-            toolRepository.RegisterTool(new CodeAnalyzer());
-            toolRepository.RegisterTool(new ExternalCommandExecutor(sessionFileSystem));
+            // SessionScope will be re-initialized with correct sessionId when tools execute
+            var sessionScopeLogger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SessionScope>>();
+            var dynamicSessionScope = new SessionScope(sessionFileSystem, sessionScopeLogger);
+            
+            // Register enhanced AbstractTool-based tools
+            toolRepository.RegisterTool(new MathEvaluator(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<MathEvaluator>>()));
+            toolRepository.RegisterTool(new CodeAnalyzer(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CodeAnalyzer>>()));
+            toolRepository.RegisterTool(new ExternalCommandExecutor(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ExternalCommandExecutor>>(), sessionFileSystem));
             
             // Register new AbstractTool-based tools with cursor navigation support
             // Tools are registered with a factory pattern to create dynamic session scopes
             // When tools are executed, they will use sessionId from ToolContext
-            var sessionScopeLogger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SessionScope>>();
-            var dynamicSessionScope = new SessionScope(sessionFileSystem, sessionScopeLogger);
-            // SessionScope will be re-initialized with correct sessionId when tools execute
             
             toolRepository.RegisterTool(new GitHubRepositoryDownloader(dynamicSessionScope, gitHubDownloaderLogger, httpClientFactory.CreateClient()));
             toolRepository.RegisterTool(new FileSystemAnalyzer(dynamicSessionScope, serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileSystemAnalyzer>>()));
@@ -118,19 +119,35 @@ public static class ServiceRegistration
         // NOTE: System configured for PESSIMISTIC STRATEGY ONLY
         // This ensures conservative, backend-focused execution for all queries
         // with comprehensive validation and specific development guidance
+        
+        // Register prompt system services
+        services.AddSingleton<Ollama.Domain.Configuration.PromptConfiguration>(provider => 
+            new Ollama.Domain.Configuration.PromptConfiguration
+            {
+                PromptBasePath = "prompts",
+                PessimisticPromptFileName = "pessimistic-initial-system-prompt.txt",
+                RequirePromptFiles = true,
+                MaxPromptFileSize = 1048576 // 1MB
+            });
+        
+        services.AddSingleton<Ollama.Domain.Prompts.IPlaceholderDecorator, Ollama.Infrastructure.Prompts.ToolReflectionDecorator>();
+        services.AddSingleton<Ollama.Infrastructure.Prompts.PromptService>();
+        
         services.AddSingleton<ISessionFileSystem, Ollama.Infrastructure.Services.SessionFileSystem>();
+        services.AddSingleton<Ollama.Infrastructure.Services.SessionLogger>();
         services.AddSingleton<IAgentStrategy, Ollama.Infrastructure.Strategies.PessimisticAgentStrategy>();
         services.AddSingleton<Ollama.Infrastructure.Agents.StrategicAgent>(provider =>
         {
             var strategy = provider.GetRequiredService<IAgentStrategy>();
             var sessionFileSystem = provider.GetRequiredService<ISessionFileSystem>();
+            var sessionLogger = provider.GetRequiredService<Ollama.Infrastructure.Services.SessionLogger>();
             var toolRepository = provider.GetRequiredService<IToolRepository>();
             var ollamaClient = provider.GetRequiredService<BuiltInOllamaClient>();
             var communicationService = provider.GetRequiredService<ILLMCommunicationService>();
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ollama.Infrastructure.Agents.StrategicAgent>>();
             var ollamaSettings = provider.GetRequiredService<OllamaSettings>();
             
-            return new Ollama.Infrastructure.Agents.StrategicAgent(strategy, sessionFileSystem, toolRepository, ollamaClient, communicationService, logger, ollamaSettings.DefaultModel);
+            return new Ollama.Infrastructure.Agents.StrategicAgent(strategy, sessionFileSystem, sessionLogger, toolRepository, ollamaClient, communicationService, logger, ollamaSettings.DefaultModel);
         });
 
         return services;

@@ -1,8 +1,0 @@
-{
-  "SessionId": "c2530758-dd96-4809-8da3-6dca7a987c71",
-  "Strategy": "Pessimistic",
-  "InitialPrompt": "download and analyze https://github.com/ppotepa/ClickBytez.EF.Gateway also tell me what are the biggest files in this repository and what they are responsible for",
-  "SessionRoot": "D:\\git\\ppotepa\\ollama-agent-suite\\cache\\c2530758-dd96-4809-8da3-6dca7a987c71",
-  "CurrentDirectory": "D:\\git\\ppotepa\\ollama-agent-suite\\cache\\c2530758-dd96-4809-8da3-6dca7a987c71",
-  "CreatedAt": "2025-08-28T18:39:27.1601626Z"
-}

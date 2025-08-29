@@ -169,7 +169,7 @@ public static class SchemaDemo
             Metadata = new ResponseMetadata
             {
                 ResponseTime = DateTime.UtcNow,
-                ModelUsed = "llama3.1:8b",
+                ModelUsed = "qwen2.5:7b-instruct-q4_K_M",
                 ProcessingDurationMs = 2350,
                 StrategyApplied = "Pessimistic"
             }

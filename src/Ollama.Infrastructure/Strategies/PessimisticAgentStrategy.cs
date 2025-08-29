@@ -3,6 +3,8 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using System.IO;
 using Ollama.Domain.Tools;
+using Ollama.Infrastructure.Prompts;
+using Ollama.Domain.Configuration;
 
 namespace Ollama.Infrastructure.Strategies;
 
@@ -13,155 +15,66 @@ namespace Ollama.Infrastructure.Strategies;
 public class PessimisticAgentStrategy : IAgentStrategy
 {
     private readonly ILogger<PessimisticAgentStrategy>? _logger;
+    private readonly PromptService _promptService;
+    private readonly PromptConfiguration _promptConfiguration;
 
     public string Name => "Pessimistic";
 
-    public PessimisticAgentStrategy(ILogger<PessimisticAgentStrategy>? logger = null)
+    public PessimisticAgentStrategy(
+        ILogger<PessimisticAgentStrategy>? logger = null,
+        PromptService? promptService = null,
+        PromptConfiguration? promptConfiguration = null)
     {
         _logger = logger;
+        _promptService = promptService ?? throw new ArgumentNullException(nameof(promptService));
+        _promptConfiguration = promptConfiguration ?? throw new ArgumentNullException(nameof(promptConfiguration));
     }
 
     public string GetInitialPrompt()
     {
         try
         {
-            // Try to load from the prompts directory relative to the application
-            var promptPath = Path.Combine("prompts", "pessimistic-initial-system-prompt.txt");
+            // Use the new PromptService to load and process the prompt template
+            // Note: This is a synchronous method, so we need to handle the async call
+            var promptTask = _promptService.GetProcessedPromptAsync(
+                _promptConfiguration.PessimisticPromptFileName, 
+                "initial-load");
             
-            if (File.Exists(promptPath))
-            {
-                return File.ReadAllText(promptPath);
-            }
-            
-            // Fallback: try relative to the solution root
-            var fallbackPath = Path.Combine("..", "..", "..", "..", "prompts", "pessimistic-initial-system-prompt.txt");
-            if (File.Exists(fallbackPath))
-            {
-                return File.ReadAllText(fallbackPath);
-            }
-            
-            _logger?.LogWarning("Could not find prompt file at {Path}, using embedded fallback", promptPath);
-            
-            // Fallback to embedded prompt if file not found
-            return GetEmbeddedPrompt();
+            return promptTask.GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Error loading initial prompt from file, using embedded fallback");
-            return GetEmbeddedPrompt();
+            _logger?.LogError(ex, "Error loading prompt template from PromptService");
+            throw new InvalidOperationException("Failed to load pessimistic prompt template. Ensure the prompt file exists and is properly configured.", ex);
         }
-    }
-
-    private string GetEmbeddedPrompt()
-    {
-        return @"You are a helpful AI agent with a systematic approach to problem-solving and retry capabilities.
-
-CRITICAL OUTPUT REQUIREMENT - READ THIS CAREFULLY:
-==================================================
-YOU MUST RESPOND WITH ONLY A SINGLE JSON OBJECT. NOTHING ELSE.
-- NO explanatory text before the JSON
-- NO explanatory text after the JSON  
-- NO code blocks or markdown formatting
-- NO additional commentary
-- ONLY raw JSON text that can be directly parsed
-
-Your response must be EXACTLY this JSON structure and NOTHING MORE:
-{
-  ""reasoning"": ""Your detailed step-by-step reasoning process"",
-  ""taskComplete"": false,
-  ""nextStep"": ""Specific action to take next"",
-  ""requiresTool"": false,
-  ""tool"": null,
-  ""parameters"": {},
-  ""confidence"": 0.0,
-  ""assumptions"": [],
-  ""risks"": [],
-  ""response"": ""Your response to the user""
-}
-
-RESPONSE FORMAT ENFORCEMENT:
-- Start your response with {
-- End your response with }
-- Include no other characters outside the JSON object
-- Do not wrap in ```json``` code blocks
-- Do not add any explanations outside the JSON
-
-KEY PRINCIPLES:
-1. Always respond with valid JSON only - no other text whatsoever
-2. Take direct, actionable steps
-3. When tools fail, automatically try different approaches (retry limit: 10 attempts)
-4. Break complex tasks into concrete steps
-5. Provide specific, executable actions
-
-RETRY STRATEGIES:
-When a tool fails, you have multiple alternative approaches:
-- GitHubDownloader fails → Try ExternalCommandExecutor with: ""git clone <repo_url>""
-- Git clone fails → Try: ""powershell -Command 'Invoke-WebRequest <archive_url> -OutFile repo.zip'""
-- PowerShell fails → Try: ""curl -L <archive_url> -o repo.zip""
-- Download fails → Try: ""wget <archive_url>""
-
-ACTION REQUIREMENTS:
-The 'nextStep' field should contain direct actions like:
-- ""Use GitHubDownloader tool to download repository https://github.com/user/repo""
-- ""Use FileSystemAnalyzer tool to analyze directory ./downloads/repo""
-- ""Use CodeAnalyzer tool to read file ./downloads/repo/Program.cs""
-- ""Use MathEvaluator tool to calculate expression: 15 * 8 + 42""
-- ""Use ExternalCommandExecutor tool to run: git clone https://github.com/user/repo""
-
-TOOL PARAMETERS:
-GitHubDownloader: ""repoUrl"", ""sessionId""
-FileSystemAnalyzer: ""directoryPath"", ""includeSubdirectories"", ""minimumFileSize""
-CodeAnalyzer: ""filePath"", ""analysisType""
-MathEvaluator: ""expression""
-ExternalCommandExecutor: ""command"", ""workingDirectory"" (optional), ""timeoutSeconds"" (optional)
-
-COMPLETION CRITERIA:
-Only set taskComplete to true when you have fully answered the user's question with verified results.
-
-Remember: Respond only with valid JSON. No additional text.";
     }
 
     public string FormatQueryPrompt(string userQuery, string? sessionId = null)
     {
-        var sessionInfo = !string.IsNullOrEmpty(sessionId) ? $" (Session: {sessionId})" : "";
-        
-        return $@"Process the following request with maximum caution and verification{sessionInfo}:
-
-User Query: {userQuery}
-
-ABSOLUTELY CRITICAL - JSON OUTPUT ONLY:
-=====================================
-YOUR RESPONSE MUST BE EXACTLY ONE JSON OBJECT AND NOTHING ELSE.
-- Do NOT include any text before the opening {{
-- Do NOT include any text after the closing }}
-- Do NOT use markdown code blocks like ```json```
-- Do NOT add explanations or comments outside the JSON
-- Do NOT include multiple JSON objects
-- The FIRST character of your response must be {{
-- The LAST character of your response must be }}
-
-CRITICAL REQUIREMENTS:
-1. Respond only in pure JSON format - no other text or formatting
-2. Analyze the user's request carefully and choose the most appropriate approach
-3. Your 'nextStep' must be a SPECIFIC EXECUTABLE ACTION based on the actual user request
-4. Choose tools based on what the user is actually asking for, not predetermined assumptions
-5. Consider what could go wrong at each step
-6. Use tools only when necessary to answer the user's question
-7. Break complex tasks into logical, manageable steps
-
-TOOL SELECTION GUIDANCE:
-========================
-Analyze the user's request and select the appropriate tool:
-- For mathematical problems → Use MathEvaluator
-- For GitHub repository tasks → Use GitHubDownloader  
-- For file/directory analysis → Use FileSystemAnalyzer
-- For reading code files → Use CodeAnalyzer
-- For system commands → Use ExternalCommandExecutor
-- For simple questions that don't require tools → Provide direct answers
-
-Make your nextStep immediately actionable and relevant to the user's actual request!
-
-FINAL REMINDER: Your response starts with {{ and ends with }}. Nothing else.";
+        try
+        {
+            // Load the query prompt template and process placeholders
+            var promptTask = _promptService.GetProcessedPromptAsync(
+                "query-prompt-template.txt", 
+                sessionId ?? "query-format");
+            
+            var template = promptTask.GetAwaiter().GetResult();
+            
+            // Replace the [QUERY] placeholder with the actual query
+            var sessionInfo = !string.IsNullOrEmpty(sessionId) ? $" (Session: {sessionId})" : "";
+            var processedTemplate = template.Replace("[QUERY]", userQuery)
+                                           .Replace("[SESSION_INFO]", sessionInfo);
+            
+            return processedTemplate;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error loading query prompt template, using basic format");
+            
+            // Simple fallback without hardcoded template
+            var sessionInfo = !string.IsNullOrEmpty(sessionId) ? $" (Session: {sessionId})" : "";
+            return $"Process the following request{sessionInfo}:\n\nUser Query: {userQuery}";
+        }
     }
 
     public bool IsTaskComplete(string response)
@@ -409,6 +322,101 @@ FINAL REMINDER: Your response starts with {{ and ends with }}. Nothing else.";
 
     public string FormatToolResponse(string toolName, string toolResponse)
     {
+        try
+        {
+            // Parse the tool response to extract useful information
+            var isSuccessful = !toolResponse.ToLowerInvariant().Contains("failed") && 
+                               !toolResponse.ToLowerInvariant().Contains("error") &&
+                               !toolResponse.ToLowerInvariant().Contains("exhausted");
+            
+            if (isSuccessful)
+            {
+                return FormatSuccessfulToolResponse(toolName, toolResponse);
+            }
+            else
+            {
+                return FormatFailedToolResponse(toolName, toolResponse);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error formatting tool response for {Tool}", toolName);
+            return FormatGenericToolResponse(toolName, toolResponse);
+        }
+    }
+    
+    private string FormatSuccessfulToolResponse(string toolName, string toolResponse)
+    {
+        var responseInfo = ExtractToolResponseInformation(toolResponse);
+        
+        return $@"✅ Tool '{toolName}' executed successfully!
+
+EXECUTION SUMMARY:
+==================
+Status: SUCCESS
+Tool: {toolName}
+Working Directory: {responseInfo.WorkingDirectory ?? "session root"}
+Execution Time: {responseInfo.ExecutionTime ?? "completed"}
+
+RESULTS:
+========
+{toolResponse}
+
+NEXT ACTION GUIDANCE:
+====================
+The tool executed successfully and provided results above. You now have:
+1. ✅ Access to the results in your current working directory: {responseInfo.WorkingDirectory ?? "session root"}
+2. ✅ Data is ready for analysis or further processing
+3. ✅ You can now use other tools to work with this data
+
+KEY CONTEXT FOR LLM:
+- Current cursor position: {responseInfo.WorkingDirectory ?? "session root"}
+- Tool execution completed successfully
+- Results are available for immediate use
+- No retry needed - proceed with next step
+
+AVAILABLE OPTIONS:
+- Use FileSystemAnalyzer to explore downloaded/created content
+- Use PrintWorkingDirectory to see current location
+- Use other tools to process the results
+- Continue with your analysis based on successful results
+
+IMPORTANT: The tool completed successfully. Use the results above to continue your task.";
+    }
+    
+    private string FormatFailedToolResponse(string toolName, string toolResponse)
+    {
+        return $@"❌ Tool '{toolName}' execution encountered issues.
+
+EXECUTION SUMMARY:
+==================
+Status: FAILED
+Tool: {toolName}
+Issue: Tool execution did not complete successfully
+
+DETAILED RESULT:
+===============
+{toolResponse}
+
+NEXT ACTION GUIDANCE:
+====================
+The tool execution failed. You should:
+1. ❌ Analyze the error details above
+2. ❌ Consider alternative approaches
+3. ❌ Try different tool parameters
+4. ❌ Use fallback strategies
+
+RETRY STRATEGIES AVAILABLE:
+- For GitHubDownloader: Try ExternalCommandExecutor with git clone
+- For FileSystemAnalyzer: Try DirectoryList or PrintWorkingDirectory  
+- For download failures: Try different URLs or manual approaches
+- General: Break the task into smaller steps
+
+IMPORTANT: Tool failed - implement fallback strategy before proceeding.";
+    }
+    
+    private string FormatGenericToolResponse(string toolName, string toolResponse)
+    {
         return $@"Tool '{toolName}' execution completed. 
 
 TOOL RESULT:
@@ -422,6 +430,71 @@ Now analyze this result carefully:
 5. Are there any edge cases or risks to consider?
 
 Continue processing with extreme caution. Verify everything before drawing conclusions.";
+    }
+    
+    private (string? WorkingDirectory, string? ExecutionTime) ExtractToolResponseInformation(string toolResponse)
+    {
+        string? workingDirectory = null;
+        string? executionTime = null;
+        
+        try
+        {
+            // Extract working directory information
+            var lines = toolResponse.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            
+            foreach (var line in lines)
+            {
+                var lowerLine = line.ToLowerInvariant();
+                
+                // Look for working directory indicators
+                if (lowerLine.Contains("working directory:") || lowerLine.Contains("current directory:") || 
+                    lowerLine.Contains("extracted to:") || lowerLine.Contains("downloaded to:") ||
+                    lowerLine.Contains("created directory:") || lowerLine.Contains("target:"))
+                {
+                    var parts = line.Split(':', 2);
+                    if (parts.Length == 2)
+                    {
+                        workingDirectory = parts[1].Trim();
+                    }
+                }
+                
+                // Look for execution time
+                if (lowerLine.Contains("duration:") || lowerLine.Contains("execution time:") ||
+                    lowerLine.Contains("completed in"))
+                {
+                    var parts = line.Split(':', 2);
+                    if (parts.Length == 2)
+                    {
+                        executionTime = parts[1].Trim();
+                    }
+                }
+            }
+            
+            // If no specific working directory found, try to extract paths
+            if (string.IsNullOrEmpty(workingDirectory))
+            {
+                // Look for path-like patterns
+                foreach (var line in lines)
+                {
+                    if (line.Contains("\\") || line.Contains("/"))
+                    {
+                        // This might be a path
+                        var potentialPath = line.Trim();
+                        if (potentialPath.Contains("cache") || potentialPath.Contains("session"))
+                        {
+                            workingDirectory = potentialPath;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Error extracting tool response information");
+        }
+        
+        return (workingDirectory, executionTime);
     }
 
     public string ValidateResponse(string response, string? sessionId = null)
@@ -661,7 +734,7 @@ Continue processing with extreme caution. Verify everything before drawing concl
         {
             ["reasoning"] = "Processing user request",
             ["requiresTool"] = false,
-            ["tool"] = null,
+            ["tool"] = "",
             ["parameters"] = new Dictionary<string, string>(),
             ["confidence"] = 0.5,
             ["assumptions"] = new List<string>(),
@@ -731,7 +804,7 @@ Continue processing with extreme caution. Verify everything before drawing concl
                                     nextStepDict["requiresTool"] = nextStepProp.Value.GetBoolean();
                                     break;
                                 case "tool":
-                                    nextStepDict["tool"] = nextStepProp.Value.GetString();
+                                    nextStepDict["tool"] = nextStepProp.Value.GetString() ?? "";
                                     break;
                                 case "parameters":
                                     var paramsDict = new Dictionary<string, string>();

@@ -8,24 +8,20 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory deletion tool - equivalent to 'rmdir' or 'rd' command
     /// Deletes directories within session boundaries
     /// </summary>
-    public class DirectoryDeleteTool : ITool
+    public class DirectoryDeleteTool : AbstractTool
     {
-        private readonly ISessionScope _sessionScope;
-        private readonly ILogger<DirectoryDeleteTool> _logger;
-
-        public string Name => "DirectoryDelete";
-        public string Description => "Deletes directories (equivalent to 'rmdir' or 'rd' command)";
-        public IEnumerable<string> Capabilities => new[] { "dir:delete", "directory:remove", "fs:rmdir" };
-        public bool RequiresNetwork => false;
-        public bool RequiresFileSystem => true;
+        public override string Name => "DirectoryDelete";
+        public override string Description => "Deletes directories (equivalent to 'rmdir' or 'rd' command)";
+        public override IEnumerable<string> Capabilities => new[] { "dir:delete", "directory:remove", "fs:rmdir" };
+        public override bool RequiresNetwork => false;
+        public override bool RequiresFileSystem => true;
 
         public DirectoryDeleteTool(ISessionScope sessionScope, ILogger<DirectoryDeleteTool> logger)
+            : base(sessionScope, logger)
         {
-            _sessionScope = sessionScope;
-            _logger = logger;
         }
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             if (!context.Parameters.TryGetValue("path", out var pathObj) || string.IsNullOrWhiteSpace(pathObj?.ToString()))
             {
@@ -33,29 +29,28 @@ namespace Ollama.Infrastructure.Tools.Directory
             }
 
             var path = pathObj.ToString()!;
-            var safePath = _sessionScope.GetSafePath(path);
+            var safePath = SessionScope.GetSafePath(path);
             return Task.FromResult(System.IO.Directory.Exists(safePath));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.0m); // No cost for directory deletion
         }
 
-        public async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             
             try
             {
+                EnsureSessionScopeInitialized(context);
+                
+                var navigationResult = ProcessCursorNavigation(context);
+                
                 if (!context.Parameters.TryGetValue("path", out var pathObj) || string.IsNullOrWhiteSpace(pathObj?.ToString()))
                 {
-                    return new ToolResult
-                    {
-                        Success = false,
-                        ErrorMessage = "Path parameter is required",
-                        ExecutionTime = DateTime.Now - startTime
-                    };
+                    return CreateResult(false, errorMessage: "Path parameter is required", startTime: startTime);
                 }
 
                 var path = pathObj.ToString()!;
@@ -67,50 +62,30 @@ namespace Ollama.Infrastructure.Tools.Directory
                     && forceObj is bool f && f;
 
                 // Get safe path within session
-                var safePath = _sessionScope.GetSafePath(path);
+                var safePath = SessionScope.GetSafePath(path);
                 
                 if (!System.IO.Directory.Exists(safePath))
                 {
-                    return new ToolResult
-                    {
-                        Success = false,
-                        ErrorMessage = $"Directory not found: {GetRelativePath(safePath)}",
-                        ExecutionTime = DateTime.Now - startTime
-                    };
+                    return CreateResult(false, errorMessage: $"Directory not found: {GetRelativePath(safePath)}", startTime: startTime);
                 }
 
                 // Safety check - prevent deletion of session root
-                if (string.Equals(safePath, _sessionScope.SessionRoot, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(safePath, SessionScope.SessionRoot, StringComparison.OrdinalIgnoreCase))
                 {
-                    return new ToolResult
-                    {
-                        Success = false,
-                        ErrorMessage = "Cannot delete session root directory",
-                        ExecutionTime = DateTime.Now - startTime
-                    };
+                    return CreateResult(false, errorMessage: "Cannot delete session root directory", startTime: startTime);
                 }
 
                 // Delete directory
                 var result = await DeleteDirectory(safePath, recursive, force);
                 
-                _logger.LogInformation("DirectoryDelete completed for path: {Path}", path);
+                Logger.LogInformation("DirectoryDelete completed for path: {Path}", path);
                 
-                return new ToolResult
-                {
-                    Success = true,
-                    Output = result,
-                    ExecutionTime = DateTime.Now - startTime
-                };
+                return CreateSuccessResultWithContext(result, navigationResult, startTime);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error deleting directory");
-                return new ToolResult
-                {
-                    Success = false,
-                    ErrorMessage = $"Directory deletion failed: {ex.Message}",
-                    ExecutionTime = DateTime.Now - startTime
-                };
+                Logger.LogError(ex, "Error deleting directory");
+                return CreateResult(false, errorMessage: $"Directory deletion failed: {ex.Message}", startTime: startTime);
             }
         }
 
@@ -183,19 +158,8 @@ namespace Ollama.Infrastructure.Tools.Directory
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Warning: Could not remove read-only attributes from {Path}", directory.FullName);
+                Logger.LogWarning(ex, "Warning: Could not remove read-only attributes from {Path}", directory.FullName);
             }
-        }
-
-        private string GetRelativePath(string fullPath)
-        {
-            var sessionRoot = _sessionScope.SessionRoot;
-            if (fullPath.StartsWith(sessionRoot))
-            {
-                var relative = fullPath.Substring(sessionRoot.Length);
-                return relative.TrimStart('\\', '/') ?? ".";
-            }
-            return fullPath;
         }
     }
 }

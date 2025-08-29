@@ -6,7 +6,7 @@ using System.Text;
 namespace Ollama.Infrastructure.Tools
 {
     /// <summary>
-    /// Abstract base class for all tools providing common cursor navigation and session functionality
+    /// Enhanced abstract base class for all tools providing retry logic and alternative method support
     /// </summary>
     public abstract class AbstractTool : ITool
     {
@@ -39,7 +39,251 @@ namespace Ollama.Infrastructure.Tools
         public abstract bool RequiresNetwork { get; }
         public abstract bool RequiresFileSystem { get; }
 
+        /// <summary>
+        /// Primary execution method - derived classes implement this
+        /// </summary>
         public abstract Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default);
+        
+        /// <summary>
+        /// Enhanced execution with built-in retry and fallback mechanisms
+        /// </summary>
+        public virtual async Task<ToolResult> RunWithRetryAsync(ToolContext context, int maxRetries = 3, TimeSpan? retryDelay = null, CancellationToken cancellationToken = default)
+        {
+            var delay = retryDelay ?? TimeSpan.FromSeconds(1);
+            var totalStartTime = DateTime.UtcNow;
+            ToolResult? lastResult = null;
+            
+            Logger.LogInformation("Tool {ToolName}: Starting execution with retry (max {MaxRetries} attempts)", 
+                Name, maxRetries);
+
+            for (int attempt = 0; attempt <= maxRetries; attempt++)
+            {
+                context.RetryAttempt = attempt;
+                var attemptStartTime = DateTime.UtcNow;
+                
+                try
+                {
+                    Logger.LogDebug("Tool {ToolName}: Attempt {Attempt}/{MaxAttempts}", 
+                        Name, attempt + 1, maxRetries + 1);
+                    
+                    // Try primary method
+                    var result = await RunAsync(context, cancellationToken);
+                    result.TotalAttempts = attempt + 1;
+                    result.MethodUsed = "primary";
+                    
+                    // Record attempt
+                    var attemptRecord = new ToolExecutionAttempt
+                    {
+                        Method = "primary",
+                        Success = result.Success,
+                        ErrorMessage = result.ErrorMessage,
+                        Duration = DateTime.UtcNow - attemptStartTime,
+                        AttemptNumber = attempt + 1
+                    };
+                    context.ExecutionHistory.Add(attemptRecord);
+                    
+                    if (result.Success)
+                    {
+                        Logger.LogInformation("Tool {ToolName}: Succeeded on attempt {Attempt}", 
+                            Name, attempt + 1);
+                        return result;
+                    }
+                    
+                    lastResult = result;
+                    Logger.LogWarning("Tool {ToolName}: Attempt {Attempt} failed: {Error}", 
+                        Name, attempt + 1, result.ErrorMessage);
+                    
+                    // If we have alternatives and this is the last retry, try alternatives
+                    if (attempt == maxRetries && GetAlternativeMethods().Any())
+                    {
+                        Logger.LogInformation("Tool {ToolName}: Trying alternative methods after {Attempts} failed attempts", 
+                            Name, attempt + 1);
+                        
+                        var alternativeResult = await TryAlternativeAsync(context, result.ErrorMessage ?? "Unknown error", cancellationToken);
+                        alternativeResult.TotalAttempts = attempt + 1;
+                        
+                        if (alternativeResult.Success)
+                        {
+                            return alternativeResult;
+                        }
+                        
+                        // Combine error messages
+                        alternativeResult.ErrorMessage = $"Primary method failed: {result.ErrorMessage}. Alternative method failed: {alternativeResult.ErrorMessage}";
+                        return alternativeResult;
+                    }
+                    
+                    // Wait before retry (except on last attempt)
+                    if (attempt < maxRetries)
+                    {
+                        Logger.LogDebug("Tool {ToolName}: Waiting {Delay}ms before retry", 
+                            Name, delay.TotalMilliseconds);
+                        await Task.Delay(delay, cancellationToken);
+                        
+                        // Exponential backoff
+                        delay = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 1.5);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Tool {ToolName}: Exception on attempt {Attempt}: {Error}", 
+                        Name, attempt + 1, ex.Message);
+                    
+                    var attemptRecord = new ToolExecutionAttempt
+                    {
+                        Method = "primary",
+                        Success = false,
+                        ErrorMessage = ex.Message,
+                        Duration = DateTime.UtcNow - attemptStartTime,
+                        AttemptNumber = attempt + 1
+                    };
+                    context.ExecutionHistory.Add(attemptRecord);
+                    
+                    lastResult = new ToolResult
+                    {
+                        Success = false,
+                        ErrorMessage = ex.Message,
+                        ExecutionTime = DateTime.UtcNow - totalStartTime,
+                        TotalAttempts = attempt + 1,
+                        MethodUsed = "primary"
+                    };
+                    
+                    // If this is the last attempt, try alternatives
+                    if (attempt == maxRetries && GetAlternativeMethods().Any())
+                    {
+                        try
+                        {
+                            var alternativeResult = await TryAlternativeAsync(context, ex.Message, cancellationToken);
+                            if (alternativeResult.Success)
+                            {
+                                return alternativeResult;
+                            }
+                        }
+                        catch (Exception altEx)
+                        {
+                            Logger.LogError(altEx, "Tool {ToolName}: Alternative method also failed", Name);
+                            lastResult.ErrorMessage += $". Alternative method failed: {altEx.Message}";
+                        }
+                    }
+                    
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(delay, cancellationToken);
+                        delay = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 1.5);
+                    }
+                }
+            }
+            
+            Logger.LogError("Tool {ToolName}: All {MaxRetries} attempts failed", Name, maxRetries + 1);
+            return lastResult ?? new ToolResult
+            {
+                Success = false,
+                ErrorMessage = "All retry attempts failed",
+                ExecutionTime = DateTime.UtcNow - totalStartTime,
+                TotalAttempts = maxRetries + 1,
+                MethodUsed = "primary"
+            };
+        }
+        
+        /// <summary>
+        /// Try alternative method if primary method fails
+        /// Default implementation tries each alternative method in order
+        /// </summary>
+        public virtual async Task<ToolResult> TryAlternativeAsync(ToolContext context, string failureReason, CancellationToken cancellationToken = default)
+        {
+            var alternatives = GetAlternativeMethods().ToList();
+            
+            if (!alternatives.Any())
+            {
+                Logger.LogDebug("Tool {ToolName}: No alternative methods available", Name);
+                return new ToolResult
+                {
+                    Success = false,
+                    ErrorMessage = $"No alternative methods available. Original error: {failureReason}",
+                    MethodUsed = "none",
+                    HasMoreAlternatives = false
+                };
+            }
+            
+            context.PreviousFailureReason = failureReason;
+            
+            foreach (var alternative in alternatives)
+            {
+                var attemptStartTime = DateTime.UtcNow;
+                Logger.LogInformation("Tool {ToolName}: Trying alternative method: {Alternative}", Name, alternative);
+                
+                try
+                {
+                    var result = await RunAlternativeMethodAsync(context, alternative, cancellationToken);
+                    result.MethodUsed = alternative;
+                    result.HasMoreAlternatives = alternatives.IndexOf(alternative) < alternatives.Count - 1;
+                    
+                    // Record attempt
+                    var attemptRecord = new ToolExecutionAttempt
+                    {
+                        Method = alternative,
+                        Success = result.Success,
+                        ErrorMessage = result.ErrorMessage,
+                        Duration = DateTime.UtcNow - attemptStartTime,
+                        AttemptNumber = context.ExecutionHistory.Count + 1
+                    };
+                    context.ExecutionHistory.Add(attemptRecord);
+                    
+                    if (result.Success)
+                    {
+                        Logger.LogInformation("Tool {ToolName}: Alternative method {Alternative} succeeded", Name, alternative);
+                        return result;
+                    }
+                    
+                    Logger.LogWarning("Tool {ToolName}: Alternative method {Alternative} failed: {Error}", 
+                        Name, alternative, result.ErrorMessage);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Tool {ToolName}: Alternative method {Alternative} threw exception: {Error}", 
+                        Name, alternative, ex.Message);
+                    
+                    var attemptRecord = new ToolExecutionAttempt
+                    {
+                        Method = alternative,
+                        Success = false,
+                        ErrorMessage = ex.Message,
+                        Duration = DateTime.UtcNow - attemptStartTime,
+                        AttemptNumber = context.ExecutionHistory.Count + 1
+                    };
+                    context.ExecutionHistory.Add(attemptRecord);
+                }
+            }
+            
+            Logger.LogError("Tool {ToolName}: All alternative methods failed", Name);
+            return new ToolResult
+            {
+                Success = false,
+                ErrorMessage = $"All alternative methods failed. Original error: {failureReason}",
+                MethodUsed = "alternatives_exhausted",
+                HasMoreAlternatives = false
+            };
+        }
+        
+        /// <summary>
+        /// Execute a specific alternative method - derived classes can override this
+        /// </summary>
+        protected virtual Task<ToolResult> RunAlternativeMethodAsync(ToolContext context, string methodName, CancellationToken cancellationToken = default)
+        {
+            // Default implementation just returns the same method
+            // Derived classes should override this to implement actual alternative methods
+            Logger.LogWarning("Tool {ToolName}: Alternative method {Method} not implemented, falling back to primary", 
+                Name, methodName);
+            return RunAsync(context, cancellationToken);
+        }
+        
+        /// <summary>
+        /// Get available alternative methods - derived classes should override this
+        /// </summary>
+        public virtual IEnumerable<string> GetAlternativeMethods()
+        {
+            return Enumerable.Empty<string>();
+        }
+
         public abstract Task<decimal> EstimateCostAsync(ToolContext context);
         public abstract Task<bool> DryRunAsync(ToolContext context);
 
@@ -129,7 +373,8 @@ namespace Ollama.Infrastructure.Tools
             if (fullPath.StartsWith(sessionRoot, StringComparison.OrdinalIgnoreCase))
             {
                 var relative = fullPath.Substring(sessionRoot.Length);
-                return relative.TrimStart('\\', '/') ?? ".";
+                var trimmed = relative.TrimStart('\\', '/');
+                return string.IsNullOrEmpty(trimmed) ? "." : trimmed;
             }
             return fullPath;
         }

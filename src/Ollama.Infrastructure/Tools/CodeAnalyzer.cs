@@ -1,27 +1,34 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Services;
+using Microsoft.Extensions.Logging;
 using System.Text.RegularExpressions;
 
 namespace Ollama.Infrastructure.Tools
 {
-    public class CodeAnalyzer : ITool
+    public class CodeAnalyzer : AbstractTool
     {
-        public string Name => "CodeAnalyzer";
-        public string Description => "Analyzes code files for structure, patterns, and potential improvements";
-        public IEnumerable<string> Capabilities => new[] { "code:analyze", "code:quality", "code:pattern" };
-        public bool RequiresNetwork => false;
-        public bool RequiresFileSystem => true;
+        public override string Name => "CodeAnalyzer";
+        public override string Description => "Analyzes code files for structure, patterns, and potential improvements";
+        public override IEnumerable<string> Capabilities => new[] { "code:analyze", "code:quality", "code:pattern" };
+        public override bool RequiresNetwork => false;
+        public override bool RequiresFileSystem => true;
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public CodeAnalyzer(ISessionScope sessionScope, ILogger<CodeAnalyzer> logger) 
+            : base(sessionScope, logger)
+        {
+        }
+
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             return Task.FromResult(context.State.ContainsKey("fileStats"));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.5m); // Small cost for analysis
         }
 
-        public async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             

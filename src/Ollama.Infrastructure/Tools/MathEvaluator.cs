@@ -1,26 +1,33 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Ollama.Infrastructure.Tools
 {
-    public class MathEvaluator : ITool
+    public class MathEvaluator : AbstractTool
     {
-        public string Name => "MathEvaluator";
-        public string Description => "Evaluates simple mathematical expressions safely";
-        public IEnumerable<string> Capabilities => new[] { "math:evaluate", "arithmetic:calculate" };
-        public bool RequiresNetwork => false;
-        public bool RequiresFileSystem => false;
+        public override string Name => "MathEvaluator";
+        public override string Description => "Evaluates simple mathematical expressions safely";
+        public override IEnumerable<string> Capabilities => new[] { "math:evaluate", "arithmetic:calculate" };
+        public override bool RequiresNetwork => false;
+        public override bool RequiresFileSystem => false;
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public MathEvaluator(ISessionScope sessionScope, ILogger<MathEvaluator> logger) 
+            : base(sessionScope, logger)
+        {
+        }
+
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             return Task.FromResult(context.Parameters.ContainsKey("expression"));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.0m); // Free operation
         }
 
-        public Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             

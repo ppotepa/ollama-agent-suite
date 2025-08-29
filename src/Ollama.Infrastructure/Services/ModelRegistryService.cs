@@ -12,6 +12,7 @@ namespace Ollama.Infrastructure.Services
         
         private readonly Dictionary<string, List<string>> _modelCapabilities = new()
         {
+            ["qwen2.5:7b-instruct-q4_K_M"] = new() { "planning", "reasoning", "analysis", "general", "conversation", "coding", "programming" },
             ["llama3.1:8b-instruct"] = new() { "planning", "reasoning", "analysis", "general" },
             ["llama3.1:8b"] = new() { "general", "conversation", "summary" },
             ["codellama"] = new() { "coding", "programming", "code-analysis", "debugging" },
@@ -23,11 +24,11 @@ namespace Ollama.Infrastructure.Services
 
         private readonly Dictionary<string, string> _taskToModel = new()
         {
-            ["planning"] = "llama3.1:8b-instruct",
-            ["coding"] = "codellama",
-            ["math"] = "llama3.1:8b-instruct",
-            ["analysis"] = "llama3.1:8b-instruct",
-            ["general"] = "llama3.1:8b"
+            ["planning"] = "qwen2.5:7b-instruct-q4_K_M",
+            ["coding"] = "qwen2.5:7b-instruct-q4_K_M",
+            ["math"] = "qwen2.5:7b-instruct-q4_K_M",
+            ["analysis"] = "qwen2.5:7b-instruct-q4_K_M",
+            ["general"] = "qwen2.5:7b-instruct-q4_K_M"
         };
 
         public ModelRegistryService(
@@ -180,7 +181,7 @@ namespace Ollama.Infrastructure.Services
 
         public string GetDefaultPlanningModel()
         {
-            return "llama3.1:8b-instruct";
+            return "qwen2.5:7b-instruct-q4_K_M";
         }
 
         public Dictionary<string, List<string>> GetModelCapabilities()
@@ -192,6 +193,7 @@ namespace Ollama.Infrastructure.Services
         {
             return modelName switch
             {
+                "qwen2.5:7b-instruct-q4_K_M" => "Qwen2.5 7B instruction-tuned model with 4-bit quantization for efficient inference",
                 "llama3.1:8b-instruct" => "Advanced reasoning and planning model with instruction following",
                 "llama3.2" => "General purpose conversational model",
                 "codellama" => "Specialized model for code generation and analysis",

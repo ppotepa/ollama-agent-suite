@@ -8,24 +8,20 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory move/rename tool - equivalent to 'move' or 'mv' command
     /// Moves or renames directories within session boundaries
     /// </summary>
-    public class DirectoryMoveTool : ITool
+    public class DirectoryMoveTool : AbstractTool
     {
-        private readonly ISessionScope _sessionScope;
-        private readonly ILogger<DirectoryMoveTool> _logger;
-
-        public string Name => "DirectoryMove";
-        public string Description => "Moves or renames directories (equivalent to 'move' or 'mv' command)";
-        public IEnumerable<string> Capabilities => new[] { "dir:move", "dir:rename", "directory:relocate", "fs:move" };
-        public bool RequiresNetwork => false;
-        public bool RequiresFileSystem => true;
-
         public DirectoryMoveTool(ISessionScope sessionScope, ILogger<DirectoryMoveTool> logger)
+            : base(sessionScope, logger)
         {
-            _sessionScope = sessionScope;
-            _logger = logger;
         }
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public override string Name => "DirectoryMove";
+        public override string Description => "Moves or renames directories (equivalent to 'move' or 'mv' command)";
+        public override IEnumerable<string> Capabilities => new[] { "dir:move", "dir:rename", "directory:relocate", "fs:move" };
+        public override bool RequiresNetwork => false;
+        public override bool RequiresFileSystem => true;
+
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             if (!context.Parameters.TryGetValue("source", out var sourceObj) || 
                 !context.Parameters.TryGetValue("destination", out var destObj) ||
@@ -38,34 +34,35 @@ namespace Ollama.Infrastructure.Tools.Directory
             var sourcePath = sourceObj.ToString()!;
             var destPath = destObj.ToString()!;
             
-            var safeSource = _sessionScope.GetSafePath(sourcePath);
-            var safeDest = _sessionScope.GetSafePath(destPath);
+            var safeSource = GetSafePath(sourcePath);
+            var safeDest = GetSafePath(destPath);
             
             return Task.FromResult(System.IO.Directory.Exists(safeSource) && !System.IO.Directory.Exists(safeDest));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.0m); // No cost for directory move
         }
 
-        public async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             
             try
             {
+                // Ensure SessionScope is initialized with correct sessionId from context
+                EnsureSessionScopeInitialized(context);
+                
+                // Process cursor navigation first (if any)
+                var navigationResult = ProcessCursorNavigation(context);
+                
                 if (!context.Parameters.TryGetValue("source", out var sourceObj) || 
                     !context.Parameters.TryGetValue("destination", out var destObj) ||
                     string.IsNullOrWhiteSpace(sourceObj?.ToString()) || 
                     string.IsNullOrWhiteSpace(destObj?.ToString()))
                 {
-                    return new ToolResult
-                    {
-                        Success = false,
-                        ErrorMessage = "Both 'source' and 'destination' parameters are required",
-                        ExecutionTime = DateTime.Now - startTime
-                    };
+                    return CreateResult(false, errorMessage: "Both 'source' and 'destination' parameters are required", startTime: startTime);
                 }
 
                 var sourcePath = sourceObj.ToString()!;
@@ -76,8 +73,8 @@ namespace Ollama.Infrastructure.Tools.Directory
                     && overwriteObj is bool ow && ow;
 
                 // Get safe paths within session
-                var safeSource = _sessionScope.GetSafePath(sourcePath);
-                var safeDest = _sessionScope.GetSafePath(destPath);
+                var safeSource = GetSafePath(sourcePath);
+                var safeDest = GetSafePath(destPath);
                 
                 if (!System.IO.Directory.Exists(safeSource))
                 {
@@ -90,7 +87,7 @@ namespace Ollama.Infrastructure.Tools.Directory
                 }
 
                 // Safety check - prevent moving session root
-                if (string.Equals(safeSource, _sessionScope.SessionRoot, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(safeSource, SessionScope.SessionRoot, StringComparison.OrdinalIgnoreCase))
                 {
                     return new ToolResult
                     {
@@ -103,7 +100,7 @@ namespace Ollama.Infrastructure.Tools.Directory
                 // Move directory
                 var result = await MoveDirectory(safeSource, safeDest, overwrite);
                 
-                _logger.LogInformation("DirectoryMove completed from {Source} to {Destination}", sourcePath, destPath);
+                Logger.LogInformation("DirectoryMove completed from {Source} to {Destination}", sourcePath, destPath);
                 
                 return new ToolResult
                 {
@@ -114,7 +111,7 @@ namespace Ollama.Infrastructure.Tools.Directory
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error moving directory");
+                Logger.LogError(ex, "Error moving directory");
                 return new ToolResult
                 {
                     Success = false,
@@ -169,17 +166,6 @@ namespace Ollama.Infrastructure.Tools.Directory
                     throw new InvalidOperationException($"Failed to move directory: {ex.Message}", ex);
                 }
             });
-        }
-
-        private string GetRelativePath(string fullPath)
-        {
-            var sessionRoot = _sessionScope.SessionRoot;
-            if (fullPath.StartsWith(sessionRoot))
-            {
-                var relative = fullPath.Substring(sessionRoot.Length);
-                return relative.TrimStart('\\', '/') ?? ".";
-            }
-            return fullPath;
         }
     }
 }

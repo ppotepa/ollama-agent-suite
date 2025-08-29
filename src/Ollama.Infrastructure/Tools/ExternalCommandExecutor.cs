@@ -1,5 +1,6 @@
 using Ollama.Domain.Tools;
 using Ollama.Domain.Services;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text;
 
@@ -10,32 +11,33 @@ namespace Ollama.Infrastructure.Tools
     /// Used primarily for retry scenarios with commands like git clone, curl, wget, etc.
     /// SECURITY: All commands are executed within session boundaries and cannot escape.
     /// </summary>
-    public class ExternalCommandExecutor : ITool
+    public class ExternalCommandExecutor : AbstractTool
     {
         private readonly ISessionFileSystem _sessionFileSystem;
 
-        public string Name => "ExternalCommandExecutor";
-        public string Description => "Executes external command-line tools for system operations, primarily as fallback mechanisms (session-isolated)";
-        public IEnumerable<string> Capabilities => new[] { "command:execute", "system:external", "fallback:operations" };
-        public bool RequiresNetwork => false; // Depends on the command being executed
-        public bool RequiresFileSystem => true;
+        public override string Name => "ExternalCommandExecutor";
+        public override string Description => "Executes external command-line tools for system operations, primarily as fallback mechanisms (session-isolated)";
+        public override IEnumerable<string> Capabilities => new[] { "command:execute", "system:external", "fallback:operations" };
+        public override bool RequiresNetwork => false; // Depends on the command being executed
+        public override bool RequiresFileSystem => true;
 
-        public ExternalCommandExecutor(ISessionFileSystem sessionFileSystem)
+        public ExternalCommandExecutor(ISessionScope sessionScope, ILogger<ExternalCommandExecutor> logger, ISessionFileSystem sessionFileSystem)
+            : base(sessionScope, logger)
         {
             _sessionFileSystem = sessionFileSystem;
         }
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             return Task.FromResult(context.Parameters.ContainsKey("command"));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.0m); // No cost for external commands
         }
 
-        public async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             

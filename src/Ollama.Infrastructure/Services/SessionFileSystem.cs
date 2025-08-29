@@ -589,7 +589,7 @@ public class SessionFileSystem : ISessionFileSystem
         }
 
         var relativePath = Path.GetRelativePath(normalizedRoot, normalizedPath);
-        return relativePath == "." ? "" : relativePath;
+        return relativePath == "." ? "." : relativePath;
     }
 
     private long CalculateDirectorySize(string directoryPath)

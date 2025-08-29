@@ -1,19 +1,26 @@
 using NUnit.Framework;
 using Ollama.Domain.Tools;
+using Ollama.Domain.Services;
 using Ollama.Infrastructure.Tools;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Ollama.Tests.Infrastructure.Tools;
 
 [TestFixture]
 public class MathEvaluatorTests
 {
-    private MathEvaluator _mathEvaluator;
-    private ToolContext _context;
+    private MathEvaluator _mathEvaluator = null!;
+    private ToolContext _context = null!;
+    private Mock<ISessionScope> _mockSessionScope = null!;
+    private Mock<ILogger<MathEvaluator>> _mockLogger = null!;
 
     [SetUp]
     public void SetUp()
     {
-        _mathEvaluator = new MathEvaluator();
+        _mockSessionScope = new Mock<ISessionScope>();
+        _mockLogger = new Mock<ILogger<MathEvaluator>>();
+        _mathEvaluator = new MathEvaluator(_mockSessionScope.Object, _mockLogger.Object);
         _context = new ToolContext();
     }
 

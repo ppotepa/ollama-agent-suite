@@ -9,24 +9,20 @@ namespace Ollama.Infrastructure.Tools.File
     /// File write tool - equivalent to 'echo' or redirection commands
     /// Writes content to files within session boundaries
     /// </summary>
-    public class FileWriteTool : ITool
+    public class FileWriteTool : AbstractTool
     {
-        private readonly ISessionScope _sessionScope;
-        private readonly ILogger<FileWriteTool> _logger;
-
-        public string Name => "FileWrite";
-        public string Description => "Writes content to files (equivalent to 'echo' or redirection commands)";
-        public IEnumerable<string> Capabilities => new[] { "file:write", "file:create", "fs:echo", "fs:redirect" };
-        public bool RequiresNetwork => false;
-        public bool RequiresFileSystem => true;
+        public override string Name => "FileWrite";
+        public override string Description => "Writes content to files (equivalent to 'echo' or redirection commands)";
+        public override IEnumerable<string> Capabilities => new[] { "file:write", "file:create", "fs:echo", "fs:redirect" };
+        public override bool RequiresNetwork => false;
+        public override bool RequiresFileSystem => true;
 
         public FileWriteTool(ISessionScope sessionScope, ILogger<FileWriteTool> logger)
+            : base(sessionScope, logger)
         {
-            _sessionScope = sessionScope;
-            _logger = logger;
         }
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             if (!context.Parameters.TryGetValue("path", out var pathObj) || 
                 !context.Parameters.TryGetValue("content", out var contentObj) ||
@@ -36,30 +32,31 @@ namespace Ollama.Infrastructure.Tools.File
             }
 
             var path = pathObj.ToString()!;
-            return Task.FromResult(_sessionScope.IsPathValid(path));
+            return Task.FromResult(SessionScope.IsPathValid(path));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.0m); // No cost for file writing
         }
 
-        public async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             
             try
             {
+                // Ensure SessionScope is initialized with correct sessionId from context
+                EnsureSessionScopeInitialized(context);
+                
+                // Process cursor navigation first (if any)
+                var navigationResult = ProcessCursorNavigation(context);
+                
                 if (!context.Parameters.TryGetValue("path", out var pathObj) || 
                     !context.Parameters.TryGetValue("content", out var contentObj) ||
                     string.IsNullOrWhiteSpace(pathObj?.ToString()))
                 {
-                    return new ToolResult
-                    {
-                        Success = false,
-                        ErrorMessage = "Both 'path' and 'content' parameters are required",
-                        ExecutionTime = DateTime.Now - startTime
-                    };
+                    return CreateResult(false, errorMessage: "Both 'path' and 'content' parameters are required", startTime: startTime);
                 }
 
                 var path = pathObj.ToString()!;
@@ -76,7 +73,7 @@ namespace Ollama.Infrastructure.Tools.File
                     : true;
 
                 // Get safe path within session
-                var safePath = _sessionScope.GetSafePath(path);
+                var safePath = GetSafePath(path);
                 
                 // Create parent directories if needed
                 if (createDirectories)
@@ -91,24 +88,14 @@ namespace Ollama.Infrastructure.Tools.File
                 // Write file
                 var result = await WriteFileContent(safePath, content, encoding, append, cancellationToken);
                 
-                _logger.LogInformation("FileWrite completed for path: {Path}", path);
+                Logger.LogInformation("FileWrite completed for path: {Path}", path);
                 
-                return new ToolResult
-                {
-                    Success = true,
-                    Output = result,
-                    ExecutionTime = DateTime.Now - startTime
-                };
+                return CreateSuccessResultWithContext(result, navigationResult, startTime);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error writing file");
-                return new ToolResult
-                {
-                    Success = false,
-                    ErrorMessage = $"File write failed: {ex.Message}",
-                    ExecutionTime = DateTime.Now - startTime
-                };
+                Logger.LogError(ex, "Error writing file");
+                return CreateResult(false, errorMessage: $"File write failed: {ex.Message}", startTime: startTime);
             }
         }
 
@@ -175,30 +162,6 @@ namespace Ollama.Infrastructure.Tools.File
                 "windows-1252" or "cp1252" => Encoding.GetEncoding(1252),
                 _ => Encoding.UTF8 // Default to UTF-8
             };
-        }
-
-        private string FormatFileSize(long bytes)
-        {
-            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-            double len = bytes;
-            int order = 0;
-            while (len >= 1024 && order < sizes.Length - 1)
-            {
-                order++;
-                len = len / 1024;
-            }
-            return $"{len:0.##} {sizes[order]}";
-        }
-
-        private string GetRelativePath(string fullPath)
-        {
-            var sessionRoot = _sessionScope.SessionRoot;
-            if (fullPath.StartsWith(sessionRoot))
-            {
-                var relative = fullPath.Substring(sessionRoot.Length);
-                return relative.TrimStart('\\', '/') ?? ".";
-            }
-            return fullPath;
         }
     }
 }

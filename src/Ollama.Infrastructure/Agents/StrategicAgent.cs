@@ -6,6 +6,7 @@ using Ollama.Domain.Models.Communication;
 using Ollama.Infrastructure.Strategies;
 using Ollama.Infrastructure.Clients;
 using Ollama.Infrastructure.Tools;
+using Ollama.Infrastructure.Services;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Text.Json;
@@ -34,6 +35,7 @@ public class StrategicAgent : IAgent
 {
     private readonly IAgentStrategy _strategy;
     private readonly ISessionFileSystem _sessionFileSystem;
+    private readonly SessionLogger _sessionLogger;
     private readonly IToolRepository _toolRepository;
     private readonly BuiltInOllamaClient _ollamaClient;
     private readonly ILLMCommunicationService _communicationService;
@@ -46,6 +48,7 @@ public class StrategicAgent : IAgent
     public StrategicAgent(
         IAgentStrategy strategy,
         ISessionFileSystem sessionFileSystem,
+        SessionLogger sessionLogger,
         IToolRepository toolRepository,
         BuiltInOllamaClient ollamaClient,
         ILLMCommunicationService communicationService,
@@ -54,6 +57,7 @@ public class StrategicAgent : IAgent
     {
         _strategy = strategy;
         _sessionFileSystem = sessionFileSystem;
+        _sessionLogger = sessionLogger;
         _toolRepository = toolRepository;
         _ollamaClient = ollamaClient;
         _communicationService = communicationService;
@@ -133,8 +137,8 @@ public class StrategicAgent : IAgent
                 };
                 
                 // Log the initial system prompt for debugging and transparency
-                _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_initial_system_prompt.txt", 
-                    $"Initial System Prompt from {_strategy.Name} strategy:\n{initialPrompt}\n");
+                _sessionLogger.LogSessionInfo(sessionId, "initial_system_prompt", 
+                    $"Initial System Prompt from {_strategy.Name} strategy:\n{initialPrompt}");
                 
                 _logger.LogDebug("Session {SessionId}: Initialized conversation with strategy prompt", sessionId);
                 _logger.LogDebug("Session {SessionId}: Initial system prompt length: {Length}", sessionId, initialPrompt.Length);
@@ -148,8 +152,8 @@ public class StrategicAgent : IAgent
             AddConversationEntry(sessionId, "user", formattedPrompt);
 
             // Log the interaction
-            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_query.txt", 
-                $"User Query: {prompt}\nFormatted Prompt: {formattedPrompt}\n");
+            _sessionLogger.LogInteraction(sessionId, "query", 
+                $"User Query: {prompt}\nFormatted Prompt: {formattedPrompt}");
 
             // Call actual LLM using BuiltInOllamaClient
             var llmResponse = await CallLLMAsync(formattedPrompt, sessionId);
@@ -168,8 +172,8 @@ public class StrategicAgent : IAgent
             _logger.LogDebug("Session {SessionId}: Validated response content: {Response}", sessionId, validatedResponse);
             
             // Log the response
-            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_response.txt", 
-                $"Raw LLM Response: {llmResponse}\nValidated Response: {validatedResponse}\n");
+            _sessionLogger.LogInteraction(sessionId, "response", 
+                $"Raw LLM Response: {llmResponse}\nValidated Response: {validatedResponse}");
 
             // Iterative execution loop - "joggle back and forth" until task is complete
             var maxIterations = 10; // Prevent infinite loops
@@ -192,14 +196,14 @@ public class StrategicAgent : IAgent
                     // Execute the tool within the session context
                     var toolResponse = ExecuteTool(toolName, parameters, sessionId);
                     
+                    // Log tool execution with extended details
+                    _sessionLogger.LogToolExecution(sessionId, toolName, parameters, toolResponse, iteration, 
+                        context: $"Executing tool during iteration {iteration} of conversation flow");
+                    
                     // Format tool response for LLM
                     var formattedToolResponse = _strategy.FormatToolResponse(toolName, toolResponse);
                     AddConversationEntry(sessionId, "user", formattedToolResponse, 
                         toolName: toolName, toolParameters: parameters, isToolResponse: true);
-                    
-                    // Log tool execution
-                    _sessionFileSystem.WriteFile(sessionId, $"tools/{DateTime.UtcNow:yyyyMMdd_HHmmss}_{toolName}_iter{iteration}.txt", 
-                        $"Iteration: {iteration}\nTool: {toolName}\nParameters: {string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}"))}\nResponse: {toolResponse}\n");
                     
                     // Continue conversation - get next response after tool execution
                     var continuationResponse = ContinueConversation(sessionId, toolResponse);
@@ -288,14 +292,13 @@ public class StrategicAgent : IAgent
             var thinkingPrompt = $"Think step by step about this problem using the {_strategy.Name} approach: {prompt}";
             
             // Log thinking process
-            _sessionFileSystem.WriteFile(sessionId, $"thinking/{DateTime.UtcNow:yyyyMMdd_HHmmss}_thought.txt", 
-                $"Thinking Prompt: {thinkingPrompt}\n");
+            _sessionLogger.LogThinking(sessionId, $"Thinking Prompt: {thinkingPrompt}");
             
             // TODO: Process thinking without storing in main conversation history
             var thinkingResponse = SimulateThinking(thinkingPrompt, sessionId);
             
-            _sessionFileSystem.WriteFile(sessionId, $"thinking/{DateTime.UtcNow:yyyyMMdd_HHmmss}_result.txt", 
-                $"Thinking Result: {thinkingResponse}\n");
+            _sessionLogger.LogThinking(sessionId, $"Thinking Prompt: {thinkingPrompt}", 
+                result: $"Thinking Result: {thinkingResponse}");
             
             return thinkingResponse;
         }
@@ -331,16 +334,15 @@ public class StrategicAgent : IAgent
             // TODO: Process planning
             var planningResponse = SimulatePlanning(planningPrompt, sessionId);
             
-            // Save plan
-            var planFile = $"plans/{DateTime.UtcNow:yyyyMMdd_HHmmss}_plan.json";
-            _sessionFileSystem.WriteFile(sessionId, planFile, planningResponse);
+            // Save plan using consolidated logging
+            _sessionLogger.LogPlan(sessionId, planningResponse, "detailed_step_plan");
             
             return new
             {
                 SessionId = sessionId,
                 Strategy = _strategy.Name,
                 Plan = planningResponse,
-                PlanFile = planFile,
+                PlanFile = "plans/plans_log.txt",
                 CreatedAt = DateTime.UtcNow
             };
         }
@@ -372,16 +374,15 @@ public class StrategicAgent : IAgent
             // TODO: Process action
             var actionResponse = SimulateAction(actionPrompt, sessionId);
             
-            // Save action result
-            var actionFile = $"actions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_action.json";
-            _sessionFileSystem.WriteFile(sessionId, actionFile, actionResponse);
+            // Save action result using consolidated logging
+            _sessionLogger.LogAction(sessionId, actionResponse, "instruction_execution");
             
             return new
             {
                 SessionId = sessionId,
                 Strategy = _strategy.Name,
                 Result = actionResponse,
-                ActionFile = actionFile,
+                ActionFile = "actions/actions_log.txt",
                 ExecutedAt = DateTime.UtcNow
             };
         }
@@ -539,202 +540,77 @@ public class StrategicAgent : IAgent
 
     private string ExecuteTool(string toolName, Dictionary<string, string> parameters, string sessionId)
     {
-        const int maxRetries = 10;
-        var retryCount = 0;
-        
-        while (retryCount < maxRetries)
-        {
-            try
-            {
-                _logger.LogInformation("Session {SessionId}: Executing tool {Tool} (attempt {Retry}/{MaxRetries})", 
-                    sessionId, toolName, retryCount + 1, maxRetries);
-                
-                // Handle MISSING_TOOL requests with reflection-based tool discovery
-                if (toolName.Equals("MISSING_TOOL", StringComparison.OrdinalIgnoreCase))
-                {
-                    return HandleMissingToolRequest(sessionId, parameters);
-                }
-                
-                // Get the tool from the repository
-                var tool = _toolRepository.GetToolByName(toolName);
-                if (tool == null)
-                {
-                    var errorMessage = $"Tool '{toolName}' not found in repository";
-                    _logger.LogError("Session {SessionId}: {Error}", sessionId, errorMessage);
-                    return errorMessage;
-                }
-
-                // Create execution context for the tool
-                var context = new ToolContext
-                {
-                    WorkingDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId),
-                    SessionId = sessionId
-                };
-
-                // Add parameters to context
-                foreach (var param in parameters)
-                {
-                    context.Parameters[param.Key] = param.Value;
-                }
-
-                // Execute the tool (async to sync for now)
-                var task = tool.RunAsync(context);
-                task.Wait(); // TODO: Make this async properly
-                var result = task.Result;
-                
-                if (result.Success)
-                {
-                    _logger.LogInformation("Session {SessionId}: Tool {Tool} executed successfully on attempt {Retry}", 
-                        sessionId, toolName, retryCount + 1);
-                    return result.Output?.ToString() ?? "Tool executed successfully";
-                }
-                else
-                {
-                    var errorMessage = $"Tool {toolName} failed: {result.ErrorMessage}";
-                    _logger.LogWarning("Session {SessionId}: {Error} (attempt {Retry}/{MaxRetries})", 
-                        sessionId, errorMessage, retryCount + 1, maxRetries);
-                    
-                    // Try alternative approach
-                    var alternativeResult = TryAlternativeApproach(toolName, parameters, sessionId, retryCount);
-                    if (alternativeResult != null)
-                    {
-                        return alternativeResult;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                var errorMessage = $"Error executing tool {toolName}: {ex.Message}";
-                _logger.LogError(ex, "Session {SessionId}: {Error} (attempt {Retry}/{MaxRetries})", 
-                    sessionId, errorMessage, retryCount + 1, maxRetries);
-                
-                // Try alternative approach
-                var alternativeResult = TryAlternativeApproach(toolName, parameters, sessionId, retryCount);
-                if (alternativeResult != null)
-                {
-                    return alternativeResult;
-                }
-            }
-            
-            retryCount++;
-        }
-        
-        return $"Tool {toolName} failed after {maxRetries} attempts. All alternative approaches exhausted.";
-    }
-
-    private string? TryAlternativeApproach(string originalTool, Dictionary<string, string> parameters, string sessionId, int retryAttempt)
-    {
         try
         {
-            // GitHubDownloader alternatives
-            if (originalTool.Equals("GitHubDownloader", StringComparison.OrdinalIgnoreCase))
+            _logger.LogInformation("Session {SessionId}: Executing tool {Tool} with enhanced retry mechanism", 
+                sessionId, toolName);
+            
+            // Handle MISSING_TOOL requests with reflection-based tool discovery
+            if (toolName.Equals("MISSING_TOOL", StringComparison.OrdinalIgnoreCase))
             {
-                if (parameters.TryGetValue("url", out var repoUrl) || parameters.TryGetValue("repoUrl", out repoUrl))
-                {
-                    var alternativeCommands = GetGitHubAlternatives(repoUrl, retryAttempt);
-                    foreach (var command in alternativeCommands)
-                    {
-                        var result = ExecuteExternalCommand(command, sessionId);
-                        if (result.Contains("successfully") || !result.Contains("failed"))
-                        {
-                            _logger.LogInformation("Session {SessionId}: Alternative command succeeded: {Command}", sessionId, command);
-                            return result;
-                        }
-                        _logger.LogWarning("Session {SessionId}: Alternative command failed: {Command}", sessionId, command);
-                    }
-                }
+                return HandleMissingToolRequest(sessionId, parameters);
             }
             
-            // Other tool alternatives can be added here
-            // FileSystemAnalyzer alternatives, CodeAnalyzer alternatives, etc.
-            
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Session {SessionId}: Error in alternative approach for {Tool}", sessionId, originalTool);
-            return null;
-        }
-    }
-
-    private IEnumerable<string> GetGitHubAlternatives(string repoUrl, int retryAttempt)
-    {
-        var alternatives = new List<string>();
-        
-        // Extract repo info for different download methods
-        var repoName = ExtractRepoName(repoUrl);
-        var archiveUrl = repoUrl.Replace("github.com", "github.com") + "/archive/refs/heads/main.zip";
-        
-        switch (retryAttempt % 4)
-        {
-            case 0:
-                if (_availableCommands.ContainsKey("git"))
-                    alternatives.Add($"git clone {repoUrl}");
-                break;
-            case 1:
-                if (_availableCommands.ContainsKey("powershell"))
-                    alternatives.Add($"powershell -Command \"Invoke-WebRequest '{archiveUrl}' -OutFile '{repoName}.zip'\"");
-                break;
-            case 2:
-                if (_availableCommands.ContainsKey("curl"))
-                    alternatives.Add($"curl -L '{archiveUrl}' -o '{repoName}.zip'");
-                break;
-            case 3:
-                if (_availableCommands.ContainsKey("wget"))
-                    alternatives.Add($"wget '{archiveUrl}' -O '{repoName}.zip'");
-                break;
-        }
-        
-        return alternatives;
-    }
-
-    private string ExtractRepoName(string repoUrl)
-    {
-        try
-        {
-            var uri = new Uri(repoUrl);
-            var path = uri.AbsolutePath.TrimStart('/').TrimEnd('/');
-            return path.Split('/').LastOrDefault()?.Replace(".git", "") ?? "repository";
-        }
-        catch
-        {
-            return "repository";
-        }
-    }
-
-    private string ExecuteExternalCommand(string command, string sessionId)
-    {
-        try
-        {
-            var externalExecutor = _toolRepository.GetToolByName("ExternalCommandExecutor");
-            if (externalExecutor == null)
+            // Get the tool from the repository
+            var tool = _toolRepository.GetToolByName(toolName);
+            if (tool == null)
             {
-                return "ExternalCommandExecutor not available";
+                var errorMessage = $"Tool '{toolName}' not found in repository";
+                _logger.LogError("Session {SessionId}: {Error}", sessionId, errorMessage);
+                return errorMessage;
             }
 
+            // Create execution context for the tool with enhanced retry parameters
             var context = new ToolContext
             {
-                WorkingDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId)
+                WorkingDirectory = _sessionFileSystem.GetCurrentDirectory(sessionId),
+                SessionId = sessionId,
+                RetryAttempt = 0
             };
-            context.Parameters["command"] = command;
-            context.Parameters["timeoutSeconds"] = "60";
 
-            var task = externalExecutor.RunAsync(context);
-            task.Wait();
+            // Add parameters to context
+            foreach (var param in parameters)
+            {
+                context.Parameters[param.Key] = param.Value;
+            }
+
+            // Execute the tool with enhanced retry mechanism
+            var task = tool.RunWithRetryAsync(context, maxRetries: 10);
+            task.Wait(); // TODO: Make this async properly
             var result = task.Result;
-
+            
+            // Log comprehensive tool execution results
+            _sessionLogger.LogToolExecution(sessionId, toolName, parameters, 
+                result.Success ? "Success" : result.ErrorMessage ?? "Unknown error", 
+                result.TotalAttempts, 
+                context: $"Tool executed using method: {result.MethodUsed}, Total attempts: {result.TotalAttempts}", 
+                error: result.Success ? null : new Exception(result.ErrorMessage ?? "Tool execution failed"));
+            
             if (result.Success)
             {
-                return $"External command succeeded: {result.Output}";
+                _logger.LogInformation("Session {SessionId}: Tool {Tool} executed successfully using method {Method} after {Attempts} attempts", 
+                    sessionId, toolName, result.MethodUsed, result.TotalAttempts);
+                return result.Output?.ToString() ?? "Tool executed successfully";
             }
             else
             {
-                return $"External command failed: {result.ErrorMessage}";
+                var errorMessage = $"Tool {toolName} failed after {result.TotalAttempts} attempts using all available methods. Final error: {result.ErrorMessage}";
+                _logger.LogError("Session {SessionId}: {Error}", sessionId, errorMessage);
+                return errorMessage;
             }
         }
         catch (Exception ex)
         {
-            return $"Error executing external command: {ex.Message}";
+            var errorMessage = $"Error executing tool {toolName}: {ex.Message}";
+            _logger.LogError(ex, "Session {SessionId}: {Error}", sessionId, errorMessage);
+            
+            // Log tool execution exception with extended details
+            _sessionLogger.LogToolExecution(sessionId, toolName, parameters, 
+                ex.Message, 0, 
+                context: $"Tool execution threw exception during initialization", 
+                error: ex);
+            
+            return errorMessage;
         }
     }
 
@@ -747,8 +623,8 @@ public class StrategicAgent : IAgent
             
             // Log the full conversation context being sent to LLM
             var conversationLog = string.Join("\n---\n", conversation.Select(msg => $"{msg.Role.ToUpper()}:\n{msg.Content}"));
-            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_conversation_context.txt", 
-                $"Full Conversation Context sent to LLM:\n{conversationLog}\n");
+            _sessionLogger.LogConversationContext(sessionId, 
+                $"Full Conversation Context sent to LLM:\n{conversationLog}");
             
             _logger.LogInformation("Session {SessionId}: Calling LLM with model {Model}", sessionId, _model);
             _logger.LogDebug("Session {SessionId}: Sending {MessageCount} messages to LLM", sessionId, conversation.Count);
@@ -860,8 +736,8 @@ public class StrategicAgent : IAgent
             AddConversationEntry(sessionId, "assistant", nextResponse);
             
             // Log the continuation
-            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_continuation.txt", 
-                $"Tool Response: {toolResponse}\nNext LLM Response: {nextResponse}\n");
+            _sessionLogger.LogInteraction(sessionId, "continuation", 
+                $"Tool Response: {toolResponse}\nNext LLM Response: {nextResponse}");
             
             return _strategy.ValidateResponse(nextResponse, sessionId);
         }
@@ -950,7 +826,7 @@ public class StrategicAgent : IAgent
 
             // Serialize request for logging
             var requestJson = _communicationService.SerializeRequest(requestSchema);
-            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_request_schema.json", requestJson);
+            _sessionLogger.LogInteraction(sessionId, "request_schema", requestJson);
 
             // Call LLM with structured request
             var llmResponseJson = await CallLLMWithSchemaAsync(requestSchema, sessionId);
@@ -969,7 +845,7 @@ public class StrategicAgent : IAgent
             }
 
             // Log the structured response
-            _sessionFileSystem.WriteFile(sessionId, $"interactions/{DateTime.UtcNow:yyyyMMdd_HHmmss}_response_schema.json", llmResponseJson);
+            _sessionLogger.LogInteraction(sessionId, "response_schema", llmResponseJson);
 
             // Extract and execute the next step if available
             var (toolName, parameters, expectedOutcome) = _communicationService.ExtractExecutableAction(responseSchema);

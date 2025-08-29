@@ -9,24 +9,20 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory copy tool - equivalent to 'xcopy' or 'robocopy' command
     /// Copies directories and their contents within session boundaries
     /// </summary>
-    public class DirectoryCopyTool : ITool
+    public class DirectoryCopyTool : AbstractTool
     {
-        private readonly ISessionScope _sessionScope;
-        private readonly ILogger<DirectoryCopyTool> _logger;
-
-        public string Name => "DirectoryCopy";
-        public string Description => "Copies directories and their contents (equivalent to 'xcopy' or 'robocopy' command)";
-        public IEnumerable<string> Capabilities => new[] { "dir:copy", "directory:duplicate", "fs:xcopy" };
-        public bool RequiresNetwork => false;
-        public bool RequiresFileSystem => true;
+        public override string Name => "DirectoryCopy";
+        public override string Description => "Copies directories and their contents (equivalent to 'xcopy' or 'robocopy' command)";
+        public override IEnumerable<string> Capabilities => new[] { "dir:copy", "directory:duplicate", "fs:xcopy" };
+        public override bool RequiresNetwork => false;
+        public override bool RequiresFileSystem => true;
 
         public DirectoryCopyTool(ISessionScope sessionScope, ILogger<DirectoryCopyTool> logger)
+            : base(sessionScope, logger)
         {
-            _sessionScope = sessionScope;
-            _logger = logger;
         }
 
-        public Task<bool> DryRunAsync(ToolContext context)
+        public override Task<bool> DryRunAsync(ToolContext context)
         {
             if (!context.Parameters.TryGetValue("source", out var sourceObj) || 
                 !context.Parameters.TryGetValue("destination", out var destObj) ||
@@ -37,33 +33,32 @@ namespace Ollama.Infrastructure.Tools.Directory
             }
 
             var sourcePath = sourceObj.ToString()!;
-            var safeSource = _sessionScope.GetSafePath(sourcePath);
+            var safeSource = SessionScope.GetSafePath(sourcePath);
             
             return Task.FromResult(System.IO.Directory.Exists(safeSource));
         }
 
-        public Task<decimal> EstimateCostAsync(ToolContext context)
+        public override Task<decimal> EstimateCostAsync(ToolContext context)
         {
             return Task.FromResult(0.0m); // No cost for directory copy
         }
 
-        public async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
+        public override async Task<ToolResult> RunAsync(ToolContext context, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.Now;
             
             try
             {
+                EnsureSessionScopeInitialized(context);
+                
+                var navigationResult = ProcessCursorNavigation(context);
+                
                 if (!context.Parameters.TryGetValue("source", out var sourceObj) || 
                     !context.Parameters.TryGetValue("destination", out var destObj) ||
                     string.IsNullOrWhiteSpace(sourceObj?.ToString()) || 
                     string.IsNullOrWhiteSpace(destObj?.ToString()))
                 {
-                    return new ToolResult
-                    {
-                        Success = false,
-                        ErrorMessage = "Both 'source' and 'destination' parameters are required",
-                        ExecutionTime = DateTime.Now - startTime
-                    };
+                    return CreateResult(false, errorMessage: "Both 'source' and 'destination' parameters are required", startTime: startTime);
                 }
 
                 var sourcePath = sourceObj.ToString()!;
@@ -79,40 +74,25 @@ namespace Ollama.Infrastructure.Tools.Directory
                     : true;
 
                 // Get safe paths within session
-                var safeSource = _sessionScope.GetSafePath(sourcePath);
-                var safeDest = _sessionScope.GetSafePath(destPath);
+                var safeSource = SessionScope.GetSafePath(sourcePath);
+                var safeDest = SessionScope.GetSafePath(destPath);
                 
                 if (!System.IO.Directory.Exists(safeSource))
                 {
-                    return new ToolResult
-                    {
-                        Success = false,
-                        ErrorMessage = $"Source directory not found: {GetRelativePath(safeSource)}",
-                        ExecutionTime = DateTime.Now - startTime
-                    };
+                    return CreateResult(false, errorMessage: $"Source directory not found: {GetRelativePath(safeSource)}", startTime: startTime);
                 }
 
                 // Copy directory
                 var result = await CopyDirectory(safeSource, safeDest, overwrite, preserveAttributes, copySubdirectories, cancellationToken);
                 
-                _logger.LogInformation("DirectoryCopy completed from {Source} to {Destination}", sourcePath, destPath);
+                Logger.LogInformation("DirectoryCopy completed from {Source} to {Destination}", sourcePath, destPath);
                 
-                return new ToolResult
-                {
-                    Success = true,
-                    Output = result,
-                    ExecutionTime = DateTime.Now - startTime
-                };
+                return CreateSuccessResultWithContext(result, navigationResult, startTime);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error copying directory");
-                return new ToolResult
-                {
-                    Success = false,
-                    ErrorMessage = $"Directory copy failed: {ex.Message}",
-                    ExecutionTime = DateTime.Now - startTime
-                };
+                Logger.LogError(ex, "Error copying directory");
+                return CreateResult(false, errorMessage: $"Directory copy failed: {ex.Message}", startTime: startTime);
             }
         }
 
@@ -194,7 +174,7 @@ namespace Ollama.Infrastructure.Tools.Directory
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Warning: Could not preserve attributes for {File}", destFilePath);
+                        Logger.LogWarning(ex, "Warning: Could not preserve attributes for {File}", destFilePath);
                     }
                 }
             }
@@ -225,7 +205,7 @@ namespace Ollama.Infrastructure.Tools.Directory
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogWarning(ex, "Warning: Could not preserve attributes for {Directory}", destSubPath);
+                                Logger.LogWarning(ex, "Warning: Could not preserve attributes for {Directory}", destSubPath);
                             }
                         }
                     }
@@ -234,30 +214,6 @@ namespace Ollama.Infrastructure.Tools.Directory
                     CopyDirectoryRecursive(subDir.FullName, destSubPath, overwrite, preserveAttributes, true, stats, cancellationToken);
                 }
             }
-        }
-
-        private string FormatFileSize(long bytes)
-        {
-            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-            double len = bytes;
-            int order = 0;
-            while (len >= 1024 && order < sizes.Length - 1)
-            {
-                order++;
-                len = len / 1024;
-            }
-            return $"{len:0.##} {sizes[order]}";
-        }
-
-        private string GetRelativePath(string fullPath)
-        {
-            var sessionRoot = _sessionScope.SessionRoot;
-            if (fullPath.StartsWith(sessionRoot))
-            {
-                var relative = fullPath.Substring(sessionRoot.Length);
-                return relative.TrimStart('\\', '/') ?? ".";
-            }
-            return fullPath;
         }
 
         private class CopyStats
