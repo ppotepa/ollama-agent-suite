@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,24 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory copy tool - equivalent to 'xcopy' or 'robocopy' command
     /// Copies directories and their contents within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Copies directories and their contents within session boundaries",
+        "Equivalent to 'xcopy' or 'robocopy' command. Recursively copies directory structures with all files and subdirectories. Maintains file attributes and timestamps.",
+        "Directory Operations")]
+    [ToolUsage(
+        "Copy directory structures with all contents",
+        SecondaryUseCases = new[] { "Directory backup", "Structure duplication", "Content migration", "Recursive copying" },
+        RequiredParameters = new[] { "sourcePath", "destinationPath" },
+        OptionalParameters = new[] { "cd", "recursive", "preserveAttributes" },
+        ExampleInvocation = "DirectoryCopy with sourcePath=\"source\" destinationPath=\"backup\"",
+        ExpectedOutput = "Successfully copied directory with all contents",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All operations within session boundaries - cannot escape sandbox",
+        PerformanceNotes = "Large directories may take time to copy completely")]
+    [ToolCapabilities(
+        ToolCapability.DirectoryCopy | ToolCapability.FileCopy | ToolCapability.CursorNavigation,
+        FallbackStrategy = "File-by-file copy if bulk operations fail")]
     public class DirectoryCopyTool : AbstractTool
     {
         public override string Name => "DirectoryCopy";

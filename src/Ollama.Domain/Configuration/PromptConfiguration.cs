@@ -6,7 +6,7 @@ namespace Ollama.Domain.Configuration
     public class PromptConfiguration
     {
         public string PromptBasePath { get; set; } = "prompts";
-        public string PessimisticPromptFileName { get; set; } = "pessimistic-initial-system-prompt.txt";
+        public string PessimisticPromptFileName { get; set; } = "pessimistic-simple-system-prompt.txt";
         public string OptimisticPromptFileName { get; set; } = "optimistic-initial-system-prompt.txt";
         public string DefaultPromptFileName { get; set; } = "default-initial-system-prompt.txt";
         

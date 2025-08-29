@@ -1,6 +1,0 @@
-[2025-08-29 13:20:50 UTC] QUERY
-User Query: Hello world
-Formatted Prompt: User Query: Hello world (Session: e47457d0-34ca-46e5-9e9b-23144ff167e6)
-
-================================================================================
-

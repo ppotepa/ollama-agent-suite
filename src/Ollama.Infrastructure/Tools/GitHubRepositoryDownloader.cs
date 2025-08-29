@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using System.IO;
 using System.Net.Http;
@@ -8,6 +9,24 @@ using System.Diagnostics;
 
 namespace Ollama.Infrastructure.Tools
 {
+    [ToolDescription(
+        "Downloads GitHub repositories to session workspace",
+        "Downloads complete GitHub repositories as ZIP archives and extracts them to the session workspace. Supports public repositories with automatic extraction and organization.",
+        "Repository Operations")]
+    [ToolUsage(
+        "Download GitHub repositories for analysis or development",
+        SecondaryUseCases = new[] { "Repository cloning", "Source code download", "Project template retrieval", "Code analysis setup" },
+        RequiredParameters = new[] { "repoUrl" },
+        OptionalParameters = new[] { "targetDirectory", "extractArchive", "branch" },
+        ExampleInvocation = "GitHubRepositoryDownloader with repoUrl=\"https://github.com/user/repo\"",
+        ExpectedOutput = "Downloaded and extracted repository in session workspace",
+        RequiresFileSystem = true,
+        RequiresNetwork = true,
+        SafetyNotes = "Downloads only to session workspace - cannot escape boundaries",
+        PerformanceNotes = "Large repositories may take time to download and extract")]
+    [ToolCapabilities(
+        ToolCapability.GitHubDownload | ToolCapability.NetworkDownload | ToolCapability.ArchiveExtraction,
+        FallbackStrategy = "Alternative download methods: direct ZIP, git clone via external command")]
     public class GitHubRepositoryDownloader : AbstractTool
     {
         private readonly HttpClient _httpClient;
@@ -53,10 +72,31 @@ namespace Ollama.Infrastructure.Tools
                 
                 Logger.LogInformation("GitHubDownloader: Starting repository download");
                 
+                // Log all received parameters for debugging
+                Logger.LogInformation("GitHubDownloader: Received parameters: {Parameters}", 
+                    string.Join(", ", context.Parameters.Select(p => $"{p.Key}={p.Value}")));
+                
                 if (!context.Parameters.TryGetValue("repoUrl", out var repoUrlObj))
                 {
-                    Logger.LogError("GitHubDownloader: Repository URL parameter is missing");
-                    return CreateResult(false, errorMessage: "Repository URL is required", startTime: startTime);
+                    // Check for common parameter name variations
+                    var altParams = new[] { "repositoryUrl", "repository_url", "repo_url", "url", "githubUrl" };
+                    foreach (var altParam in altParams)
+                    {
+                        if (context.Parameters.TryGetValue(altParam, out repoUrlObj))
+                        {
+                            Logger.LogInformation("GitHubDownloader: Found repository URL in parameter '{ParamName}': {Url}", 
+                                altParam, repoUrlObj);
+                            break;
+                        }
+                    }
+                    
+                    if (repoUrlObj == null)
+                    {
+                        var availableParams = string.Join(", ", context.Parameters.Keys);
+                        Logger.LogError("GitHubDownloader: Repository URL parameter is missing. Expected 'repoUrl' but received parameters: {AvailableParams}", 
+                            availableParams);
+                        return CreateResult(false, errorMessage: $"Repository URL is required. Expected parameter 'repoUrl' but received: {availableParams}", startTime: startTime);
+                    }
                 }
 
                 // Validate session context

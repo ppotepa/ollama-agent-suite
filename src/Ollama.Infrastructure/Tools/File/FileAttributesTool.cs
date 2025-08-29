@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,24 @@ namespace Ollama.Infrastructure.Tools.File
     /// File attributes tool - equivalent to 'attrib' command
     /// Gets and sets file attributes within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Gets and sets file attributes within session boundaries",
+        "Equivalent to 'attrib' command. Displays and modifies file attributes such as read-only, hidden, system, and archive flags. Works within session workspace only.",
+        "File Operations")]
+    [ToolUsage(
+        "View and modify file attributes and properties",
+        SecondaryUseCases = new[] { "File property inspection", "Attribute modification", "Security settings", "File flag management" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "cd", "setAttributes", "removeAttributes", "recursive" },
+        ExampleInvocation = "FileAttributes with path=\"document.txt\" to view file attributes",
+        ExpectedOutput = "File attributes and properties information",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "Attribute changes are reversible - limited to session files",
+        PerformanceNotes = "Fast operation for single files")]
+    [ToolCapabilities(
+        ToolCapability.FileAttributes | ToolCapability.FileRead | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Basic file info if attribute access fails")]
     public class FileAttributesTool : AbstractTool
     {
         public FileAttributesTool(ISessionScope sessionScope, ILogger<FileAttributesTool> logger)

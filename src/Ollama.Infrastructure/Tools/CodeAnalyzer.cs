@@ -1,10 +1,29 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text.RegularExpressions;
 
 namespace Ollama.Infrastructure.Tools
 {
+    [ToolDescription(
+        "Analyzes code files for structure, patterns, and potential improvements",
+        "Comprehensive code analysis tool that examines file structure, identifies patterns, suggests improvements, and provides quality metrics. Analyzes syntax, complexity, and adherence to coding standards.",
+        "Code Analysis")]
+    [ToolUsage(
+        "Analyze code files for quality, structure, and improvement opportunities",
+        SecondaryUseCases = new[] { "Code quality assessment", "Pattern recognition", "Syntax analysis", "Complexity measurement" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "cd", "includeMetrics", "analysisDepth" },
+        ExampleInvocation = "CodeAnalyzer with path=\"MyProject.cs\" to analyze code structure",
+        ExpectedOutput = "Detailed analysis report with metrics, patterns, and suggestions",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "Read-only analysis within session boundaries",
+        PerformanceNotes = "Analysis time depends on file size and complexity")]
+    [ToolCapabilities(
+        ToolCapability.CodeAnalysis | ToolCapability.FileRead | ToolCapability.TextAnalysis,
+        FallbackStrategy = "Basic syntax analysis if advanced metrics fail")]
     public class CodeAnalyzer : AbstractTool
     {
         public override string Name => "CodeAnalyzer";

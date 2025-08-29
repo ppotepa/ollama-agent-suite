@@ -126,7 +126,7 @@ public static class ServiceRegistration
             new Ollama.Domain.Configuration.PromptConfiguration
             {
                 PromptBasePath = "prompts",
-                PessimisticPromptFileName = "pessimistic-initial-system-prompt.txt",
+                PessimisticPromptFileName = "pessimistic-simple-system-prompt.txt",
                 RequirePromptFiles = true,
                 MaxPromptFileSize = 1048576 // 1MB
             });

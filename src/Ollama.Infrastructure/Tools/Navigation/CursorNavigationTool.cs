@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,24 @@ namespace Ollama.Infrastructure.Tools.Navigation
     /// Cursor navigation tool - equivalent to 'cd' command
     /// Provides navigation within session boundaries with context awareness
     /// </summary>
+    [ToolDescription(
+        "Navigate through directories within session boundaries",
+        "Equivalent to 'cd' command. Provides secure navigation within the session workspace with path validation and context awareness. Essential for multi-step operations.",
+        "Navigation Operations")]
+    [ToolUsage(
+        "Change working directory for subsequent operations",
+        SecondaryUseCases = new[] { "Directory navigation", "Path context setting", "Workspace exploration", "Operation preparation" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "showPath", "validatePath" },
+        ExampleInvocation = "CursorNavigation with path=\"subfolder\" to navigate to directory",
+        ExpectedOutput = "Successfully changed working directory",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All navigation constrained within session boundaries",
+        PerformanceNotes = "Fast operation with path validation")]
+    [ToolCapabilities(
+        ToolCapability.CursorNavigation | ToolCapability.PathResolution | ToolCapability.DirectoryNavigate,
+        FallbackStrategy = "Relative path resolution if absolute paths fail")]
     public class CursorNavigationTool : AbstractTool
     {
         public override string Name => "CursorNavigation";

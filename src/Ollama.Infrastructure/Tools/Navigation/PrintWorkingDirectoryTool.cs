@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,24 @@ namespace Ollama.Infrastructure.Tools.Navigation
     /// Print Working Directory tool - equivalent to 'pwd' command
     /// Shows current directory location within session with full context
     /// </summary>
+    [ToolDescription(
+        "Shows current working directory within session boundaries",
+        "Equivalent to 'pwd' command. Displays the current working directory path with session context and boundary information.",
+        "Navigation Operations")]
+    [ToolUsage(
+        "Display current working directory location",
+        SecondaryUseCases = new[] { "Location verification", "Path confirmation", "Context awareness", "Navigation debugging" },
+        RequiredParameters = new string[0],
+        OptionalParameters = new[] { "showRelative", "showSessionRoot" },
+        ExampleInvocation = "PrintWorkingDirectory to show current location",
+        ExpectedOutput = "Current working directory path within session",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "Read-only operation - shows only session-relative paths",
+        PerformanceNotes = "Instant operation")]
+    [ToolCapabilities(
+        ToolCapability.CursorLocation | ToolCapability.PathResolution,
+        FallbackStrategy = "System directory call if session path unavailable")]
     public class PrintWorkingDirectoryTool : AbstractTool
     {
         public override string Name => "PrintWorkingDirectory";

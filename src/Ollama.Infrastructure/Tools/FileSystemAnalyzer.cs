@@ -1,10 +1,29 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.IO;
 
 namespace Ollama.Infrastructure.Tools
 {
+    [ToolDescription(
+        "Analyzes file system structure, file types, and sizes within session boundaries",
+        "Comprehensive file system analysis tool that examines directory structures, file distributions, size patterns, and provides statistical insights about the session workspace.",
+        "File System Analysis")]
+    [ToolUsage(
+        "Analyze file system structure and generate detailed reports",
+        SecondaryUseCases = new[] { "Directory analysis", "File size reporting", "Storage insights", "File type distribution" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "includeSubdirectories", "maxDepth", "includeHidden" },
+        ExampleInvocation = "FileSystemAnalyzer with path=\".\" to analyze current directory",
+        ExpectedOutput = "Detailed file system analysis with statistics and insights",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "Read-only analysis within session boundaries",
+        PerformanceNotes = "Large directories may take time to analyze")]
+    [ToolCapabilities(
+        ToolCapability.FileSystemAnalysis | ToolCapability.DirectoryList | ToolCapability.DataAnalysis,
+        FallbackStrategy = "Basic directory listing if advanced analysis fails")]
     public class FileSystemAnalyzer : AbstractTool
     {
         public FileSystemAnalyzer(ISessionScope sessionScope, ILogger<FileSystemAnalyzer> logger) : base(sessionScope, logger)
@@ -195,27 +214,46 @@ namespace Ollama.Infrastructure.Tools
                 PathName = directory.FullName
             };
 
+            var allFiles = new List<FileInfo>();
+
             try
             {
-                // Get all files in the current directory
-                var files = directory.GetFiles();
-                stats.TotalFiles += files.Length;
-                stats.TotalSize += files.Sum(f => f.Length);
+                // Recursively collect all files
+                CollectAllFiles(directory, allFiles);
 
-                // Group files by extension
-                var filesByExtension = files.GroupBy(f => f.Extension.ToLowerInvariant())
-                    .ToDictionary(g => g.Key, g => g.Count());
+                stats.TotalFiles = allFiles.Count;
+                stats.TotalSize = allFiles.Sum(f => f.Length);
 
-                foreach (var ext in filesByExtension)
+                // Group files by extension for file type distribution only
+                var filesByExtension = allFiles.GroupBy(f => f.Extension.ToLowerInvariant());
+                foreach (var extensionGroup in filesByExtension)
                 {
-                    stats.FileTypeDistribution[ext.Key] = ext.Value;
+                    var extension = string.IsNullOrEmpty(extensionGroup.Key) ? "(no extension)" : extensionGroup.Key;
+                    
+                    // Update file type distribution (count ALL files)
+                    stats.FileTypeDistribution[extension] = extensionGroup.Count();
                 }
 
-                // Sample some files for content analysis
-                var sampleFiles = files
+                // Populate LargestFiles (top 10 across all extensions)
+                var largestFiles = allFiles.OrderByDescending(f => f.Length).Take(10);
+                foreach (var file in largestFiles)
+                {
+                    stats.LargestFiles.Add(new FileSample
+                    {
+                        Name = file.Name,
+                        Path = GetRelativePath(file.FullName),
+                        ParentFolder = GetRelativePath(file.Directory?.FullName ?? ""),
+                        Extension = file.Extension,
+                        Size = file.Length,
+                        Preview = $"File in {GetRelativePath(file.Directory?.FullName ?? "")}"
+                    });
+                }
+
+                // Sample some files for content analysis (text files only)
+                var sampleFiles = allFiles
                     .Where(f => IsTextFile(f.Extension))
                     .OrderByDescending(f => f.Length)
-                    .Take(5)
+                    .Take(3)  // Reduce from 5 to 3 samples
                     .ToList();
 
                 foreach (var file in sampleFiles)
@@ -226,10 +264,11 @@ namespace Ollama.Infrastructure.Tools
                         stats.FileSamples.Add(new FileSample
                         {
                             Name = file.Name,
-                            Path = file.FullName,
+                            Path = GetRelativePath(file.FullName),
+                            ParentFolder = GetRelativePath(file.Directory?.FullName ?? ""),
                             Extension = file.Extension,
                             Size = file.Length,
-                            Preview = content.Length > 1000 ? content.Substring(0, 1000) + "..." : content
+                            Preview = content.Length > 200 ? content.Substring(0, 200) + "..." : content
                         });
                     }
                     catch
@@ -238,35 +277,8 @@ namespace Ollama.Infrastructure.Tools
                     }
                 }
 
-                // Recursively analyze subdirectories
-                foreach (var subDir in directory.GetDirectories())
-                {
-                    var subStats = AnalyzeDirectory(subDir);
-                    stats.TotalDirectories += subStats.TotalDirectories;
-                    stats.TotalFiles += subStats.TotalFiles;
-                    stats.TotalSize += subStats.TotalSize;
-
-                    // Merge file type distributions
-                    foreach (var typeCount in subStats.FileTypeDistribution)
-                    {
-                        if (stats.FileTypeDistribution.ContainsKey(typeCount.Key))
-                        {
-                            stats.FileTypeDistribution[typeCount.Key] += typeCount.Value;
-                        }
-                        else
-                        {
-                            stats.FileTypeDistribution[typeCount.Key] = typeCount.Value;
-                        }
-                    }
-
-                    // Collect some subdirectory info
-                    stats.Subdirectories.Add(new DirectorySummary
-                    {
-                        Name = subDir.Name,
-                        Path = subDir.FullName,
-                        FileCount = subStats.TotalFiles
-                    });
-                }
+                // Count directories and collect subdirectory info
+                CountDirectoriesAndSubdirectories(directory, stats);
             }
             catch (UnauthorizedAccessException)
             {
@@ -278,6 +290,75 @@ namespace Ollama.Infrastructure.Tools
             }
 
             return stats;
+        }
+
+        private void CollectAllFiles(DirectoryInfo directory, List<FileInfo> allFiles)
+        {
+            try
+            {
+                // Add files from current directory
+                allFiles.AddRange(directory.GetFiles());
+
+                // Recursively collect from subdirectories
+                foreach (var subDir in directory.GetDirectories())
+                {
+                    CollectAllFiles(subDir, allFiles);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Skip directories we can't access
+            }
+            catch (Exception)
+            {
+                // Skip any problematic directories
+            }
+        }
+
+        private void CountDirectoriesAndSubdirectories(DirectoryInfo directory, FileSystemStats stats)
+        {
+            try
+            {
+                foreach (var subDir in directory.GetDirectories())
+                {
+                    stats.TotalDirectories++;
+                    
+                    // Collect some subdirectory info (only direct children, limit to 10)
+                    if (subDir.Parent?.FullName == directory.FullName && stats.Subdirectories.Count < 10)
+                    {
+                        var fileCount = CountFilesInDirectory(subDir);
+                        stats.Subdirectories.Add(new DirectorySummary
+                        {
+                            Name = subDir.Name,
+                            Path = GetRelativePath(subDir.FullName),
+                            FileCount = fileCount
+                        });
+                    }
+
+                    // Recursively count subdirectories
+                    CountDirectoriesAndSubdirectories(subDir, stats);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Skip directories we can't access
+            }
+            catch (Exception)
+            {
+                // Skip any problematic directories
+            }
+        }
+
+        private int CountFilesInDirectory(DirectoryInfo directory)
+        {
+            try
+            {
+                return directory.GetFiles("*", SearchOption.AllDirectories).Length;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         #region Alternative Analysis Methods
@@ -358,7 +439,7 @@ namespace Ollama.Infrastructure.Tools
                 }
 
                 // Get largest files
-                var largestFiles = allFiles.OrderByDescending(f => f.Length).Take(20);
+                var largestFiles = allFiles.OrderByDescending(f => f.Length).Take(10);
                 foreach (var file in largestFiles)
                 {
                     stats.LargestFiles.Add(new FileSample
@@ -504,7 +585,7 @@ namespace Ollama.Infrastructure.Tools
                     stats.TotalSize += file.Length;
                     
                     // Track largest files
-                    if (stats.LargestFiles.Count < 50)
+                    if (stats.LargestFiles.Count < 15)
                     {
                         stats.LargestFiles.Add(new FileSample
                         {
@@ -579,6 +660,7 @@ namespace Ollama.Infrastructure.Tools
         public List<FileSample> FileSamples { get; set; } = new List<FileSample>();
         public List<FileSample> LargestFiles { get; set; } = new List<FileSample>();
         public List<DirectorySummary> Subdirectories { get; set; } = new List<DirectorySummary>();
+        // Removed FilesByExtension to reduce data size - LargestFiles provides the essential info
         public string AnalysisMethod { get; set; } = "standard";
     }
 
@@ -586,9 +668,20 @@ namespace Ollama.Infrastructure.Tools
     {
         public string Name { get; set; } = string.Empty;
         public string Path { get; set; } = string.Empty;
+        public string ParentFolder { get; set; } = string.Empty;
         public string Extension { get; set; } = string.Empty;
         public long Size { get; set; }
         public string Preview { get; set; } = string.Empty;
+    }
+
+    public class FileDetail
+    {
+        public string Name { get; set; } = string.Empty;
+        public string FullPath { get; set; } = string.Empty;
+        public string ParentFolder { get; set; } = string.Empty;
+        public string Extension { get; set; } = string.Empty;
+        public long Size { get; set; }
+        public DateTime LastModified { get; set; }
     }
 
     public class DirectorySummary

@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,24 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory creation tool - equivalent to 'mkdir' command
     /// Creates directories within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Creates directories within session boundaries",
+        "Equivalent to 'mkdir' command. Creates single directories or directory hierarchies with support for recursive creation of parent directories.",
+        "Directory Operations")]
+    [ToolUsage(
+        "Create new directories in the session workspace",
+        SecondaryUseCases = new[] { "Folder creation", "Directory structure setup", "Workspace organization", "Path preparation" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "cd", "recursive" },
+        ExampleInvocation = "DirectoryCreate with path=\"new-folder\" to create directory",
+        ExpectedOutput = "Successfully created directory at specified path",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All operations within session boundaries",
+        PerformanceNotes = "Fast operation for single directories")]
+    [ToolCapabilities(
+        ToolCapability.DirectoryCreate | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Recursive creation if direct creation fails")]
     public class DirectoryCreateTool : AbstractTool
     {
         public override string Name => "DirectoryCreate";

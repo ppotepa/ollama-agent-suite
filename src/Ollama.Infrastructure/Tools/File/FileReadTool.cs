@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,23 @@ namespace Ollama.Infrastructure.Tools.File
     /// File read tool - equivalent to 'type' or 'cat' command
     /// Reads file contents within session boundaries with cursor navigation support
     /// </summary>
+    [ToolDescription(
+        "Reads file contents within session boundaries", 
+        "Equivalent to 'type' (Windows) or 'cat' (Unix) command. Supports cursor navigation to change working directory before reading files. All file paths are validated to be within session boundaries for security.", 
+        "File Operations")]
+    [ToolUsage(
+        "Read text files to examine their contents",
+        SecondaryUseCases = new[] { "Display file contents", "Examine configuration files", "View code files", "Check log files" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "cd", "encoding", "showLineNumbers" },
+        ExampleInvocation = "FileRead with path=\"config.txt\" to read configuration file",
+        ExpectedOutput = "File contents as text with optional line numbers",
+        RequiresFileSystem = true,
+        SafetyNotes = "All file paths are validated against session boundaries",
+        PerformanceNotes = "Large files may take time to read; consider file size before reading")]
+    [ToolCapabilities(
+        ToolCapability.FileRead | ToolCapability.CursorNavigation | ToolCapability.PathResolution,
+        FallbackStrategy = "Multiple read strategies: standard file read, stream-based read, binary-as-text read, retry with different encodings")]
     public class FileReadTool : AbstractTool
     {
         public override string Name => "FileRead";
@@ -17,9 +35,9 @@ namespace Ollama.Infrastructure.Tools.File
         public override bool RequiresNetwork => false;
         public override bool RequiresFileSystem => true;
 
-        public FileReadTool(ISessionScope sessionScope, ILogger<FileReadTool> logger) 
+        public FileReadTool(ISessionScope sessionScope, ILogger<FileReadTool> logger)
             : base(sessionScope, logger)
-        {
+        {            
         }
 
         public override Task<bool> DryRunAsync(ToolContext context)

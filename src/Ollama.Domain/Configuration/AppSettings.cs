@@ -26,13 +26,13 @@ namespace Ollama.Domain.Configuration
         public string ModelsEndpoint { get; set; } = "http://localhost:11434/api/tags";
         
         [Required]
-        public string DefaultModel { get; set; } = "qwen2.5:7b-instruct-q4_K_M";
+        public string DefaultModel { get; set; } = "llama3.1:8b-instruct-q4_K_M";
         
         [Required]
-        public string CoderModel { get; set; } = "qwen2.5:7b-instruct-q4_K_M";
+        public string CoderModel { get; set; } = "llama3.1:8b-instruct-q4_K_M";
         
         [Required]
-        public string ThinkerModel { get; set; } = "qwen2.5:7b-instruct-q4_K_M";
+        public string ThinkerModel { get; set; } = "llama3.1:8b-instruct-q4_K_M";
         
         [Range(1, 300)]
         public int ConnectionTimeout { get; set; } = 30;
@@ -73,14 +73,14 @@ namespace Ollama.Domain.Configuration
     public class SingleQueryModeSettings
     {
         public bool Enabled { get; set; } = true;
-        public string DefaultModel { get; set; } = "qwen2.5:7b-instruct-q4_K_M";
+        public string DefaultModel { get; set; } = "llama3.1:8b-instruct-q4_K_M";
         public bool DebugOutput { get; set; } = false;
     }
 
     public class IntelligentModeSettings
     {
         public bool Enabled { get; set; } = true;
-        public string DefaultModel { get; set; } = "qwen2.5:7b-instruct-q4_K_M";
+        public string DefaultModel { get; set; } = "llama3.1:8b-instruct-q4_K_M";
         public bool UseContextSwitching { get; set; } = true;
         public bool DebugContextSwitching { get; set; } = false;
     }
@@ -108,50 +108,5 @@ namespace Ollama.Domain.Configuration
         public bool LogRequests { get; set; } = true;
         public bool LogResponses { get; set; } = false;
         public bool EnableDetailedLogging { get; set; } = false;
-    }
-
-    public class CursorSettings
-    {
-        /// <summary>
-        /// When true, tools will return full system paths in responses.
-        /// When false (default), only relative paths from session cache are returned for security.
-        /// </summary>
-        public bool UseFullPaths { get; set; } = false;
-        
-        /// <summary>
-        /// When true, includes absolute path information in cursor context for debugging.
-        /// </summary>
-        public bool IncludeDebugPaths { get; set; } = false;
-        
-        /// <summary>
-        /// Path separator to use in responses (defaults to forward slash for cross-platform compatibility).
-        /// </summary>
-        public string PathSeparator { get; set; } = "/";
-        
-        /// <summary>
-        /// Whether to show the session root in path displays.
-        /// When true, shows context about session boundaries.
-        /// </summary>
-        public bool ShowSessionRoot { get; set; } = true;
-        
-        /// <summary>
-        /// Whether to mask/hide system paths that fall outside session boundaries.
-        /// When true, external paths are shown as "[EXTERNAL_PATH]" for security.
-        /// </summary>
-        public bool MaskSystemPaths { get; set; } = true;
-        
-        /// <summary>
-        /// Gets the effective path separator based on configuration and system
-        /// </summary>
-        public string GetEffectivePathSeparator()
-        {
-            return PathSeparator.ToLower() switch
-            {
-                "auto" => Path.DirectorySeparatorChar.ToString(),
-                "/" => "/",
-                "\\" => "\\",
-                _ => "/"
-            };
-        }
     }
 }

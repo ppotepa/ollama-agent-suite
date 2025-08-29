@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,24 @@ namespace Ollama.Infrastructure.Tools.File
     /// File move tool - equivalent to 'move' or 'mv' command
     /// Moves or renames files within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Moves or renames files within session boundaries",
+        "Equivalent to 'move' or 'mv' command. Relocates files from one location to another within the session workspace. Can also be used for file renaming.",
+        "File Operations")]
+    [ToolUsage(
+        "Move or rename files in session workspace",
+        SecondaryUseCases = new[] { "File relocation", "File renaming", "Content organization", "Workspace restructuring" },
+        RequiredParameters = new[] { "sourcePath", "destinationPath" },
+        OptionalParameters = new[] { "cd", "overwrite", "preserveAttributes" },
+        ExampleInvocation = "FileMove with sourcePath=\"old.txt\" destinationPath=\"new.txt\"",
+        ExpectedOutput = "Successfully moved/renamed file",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All operations within session boundaries",
+        PerformanceNotes = "Fast operation for single files")]
+    [ToolCapabilities(
+        ToolCapability.FileMove | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Copy and delete if direct move fails")]
     public class FileMoveTool : AbstractTool
     {
         public FileMoveTool(ISessionScope sessionScope, ILogger<FileMoveTool> logger)

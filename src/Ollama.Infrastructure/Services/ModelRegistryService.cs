@@ -12,6 +12,7 @@ namespace Ollama.Infrastructure.Services
         
         private readonly Dictionary<string, List<string>> _modelCapabilities = new()
         {
+            ["llama3.1:8b-instruct-q4_K_M"] = new() { "planning", "reasoning", "analysis", "general", "conversation", "coding", "programming" },
             ["qwen2.5:7b-instruct-q4_K_M"] = new() { "planning", "reasoning", "analysis", "general", "conversation", "coding", "programming" },
             ["llama3.1:8b-instruct"] = new() { "planning", "reasoning", "analysis", "general" },
             ["llama3.1:8b"] = new() { "general", "conversation", "summary" },
@@ -24,11 +25,11 @@ namespace Ollama.Infrastructure.Services
 
         private readonly Dictionary<string, string> _taskToModel = new()
         {
-            ["planning"] = "qwen2.5:7b-instruct-q4_K_M",
-            ["coding"] = "qwen2.5:7b-instruct-q4_K_M",
-            ["math"] = "qwen2.5:7b-instruct-q4_K_M",
-            ["analysis"] = "qwen2.5:7b-instruct-q4_K_M",
-            ["general"] = "qwen2.5:7b-instruct-q4_K_M"
+            ["planning"] = "llama3.1:8b-instruct-q4_K_M",
+            ["coding"] = "llama3.1:8b-instruct-q4_K_M",
+            ["math"] = "llama3.1:8b-instruct-q4_K_M",
+            ["analysis"] = "llama3.1:8b-instruct-q4_K_M",
+            ["general"] = "llama3.1:8b-instruct-q4_K_M"
         };
 
         public ModelRegistryService(
@@ -181,7 +182,7 @@ namespace Ollama.Infrastructure.Services
 
         public string GetDefaultPlanningModel()
         {
-            return "qwen2.5:7b-instruct-q4_K_M";
+            return "llama3.1:8b-instruct-q4_K_M";
         }
 
         public Dictionary<string, List<string>> GetModelCapabilities()
@@ -193,6 +194,7 @@ namespace Ollama.Infrastructure.Services
         {
             return modelName switch
             {
+                "llama3.1:8b-instruct-q4_K_M" => "LLaMA 3.1 8B instruction-tuned model with 4-bit quantization for efficient inference",
                 "qwen2.5:7b-instruct-q4_K_M" => "Qwen2.5 7B instruction-tuned model with 4-bit quantization for efficient inference",
                 "llama3.1:8b-instruct" => "Advanced reasoning and planning model with instruction following",
                 "llama3.2" => "General purpose conversational model",

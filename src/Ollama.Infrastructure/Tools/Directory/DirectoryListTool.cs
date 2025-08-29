@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,24 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory listing tool - equivalent to 'dir' command
     /// Lists contents of directories within session boundaries with cursor navigation support
     /// </summary>
+    [ToolDescription(
+        "Lists directory contents within session boundaries",
+        "Equivalent to 'dir' or 'ls' command. Displays file and directory listings with detailed information including sizes, dates, and attributes. Supports cursor navigation.",
+        "Directory Operations")]
+    [ToolUsage(
+        "List and examine directory contents",
+        SecondaryUseCases = new[] { "File exploration", "Directory browsing", "Content inspection", "Workspace navigation" },
+        RequiredParameters = new string[0],
+        OptionalParameters = new[] { "path", "cd", "recursive", "showHidden" },
+        ExampleInvocation = "DirectoryList with path=\".\" to list current directory",
+        ExpectedOutput = "Formatted directory listing with file details",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "Read-only operation within session boundaries",
+        PerformanceNotes = "Large directories may take time to enumerate")]
+    [ToolCapabilities(
+        ToolCapability.DirectoryList | ToolCapability.CursorNavigation | ToolCapability.PathResolution,
+        FallbackStrategy = "Basic file enumeration if advanced listing fails")]
     public class DirectoryListTool : AbstractTool
     {
         public override string Name => "DirectoryList";

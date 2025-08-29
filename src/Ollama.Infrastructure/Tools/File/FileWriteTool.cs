@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,24 @@ namespace Ollama.Infrastructure.Tools.File
     /// File write tool - equivalent to 'echo' or redirection commands
     /// Writes content to files within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Writes content to files within session boundaries",
+        "Equivalent to 'echo' or redirection commands. Creates new files or overwrites existing ones with specified content. Supports various encodings and append modes.",
+        "File Operations")]
+    [ToolUsage(
+        "Create or update files with specified content",
+        SecondaryUseCases = new[] { "File creation", "Content writing", "Text output", "Configuration generation" },
+        RequiredParameters = new[] { "path", "content" },
+        OptionalParameters = new[] { "cd", "encoding", "append", "createDirectories" },
+        ExampleInvocation = "FileWrite with path=\"output.txt\" content=\"Hello World\"",
+        ExpectedOutput = "Successfully wrote content to file",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All operations within session boundaries - can overwrite existing files",
+        PerformanceNotes = "Large content may take time to write")]
+    [ToolCapabilities(
+        ToolCapability.FileWrite | ToolCapability.FileCreate | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Stream-based writing if direct file writing fails")]
     public class FileWriteTool : AbstractTool
     {
         public override string Name => "FileWrite";

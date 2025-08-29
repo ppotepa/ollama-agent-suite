@@ -1,9 +1,28 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 
 namespace Ollama.Infrastructure.Tools
 {
+    [ToolDescription(
+        "Evaluates mathematical expressions safely using built-in arithmetic operations", 
+        "Safe mathematical expression evaluator that supports basic arithmetic (+, -, *, /), parentheses, and common mathematical functions. Does not execute arbitrary code and is sandboxed for security.", 
+        "Mathematical Operations")]
+    [ToolUsage(
+        "Evaluate mathematical expressions and perform calculations",
+        SecondaryUseCases = new[] { "Arithmetic calculations", "Formula evaluation", "Basic math operations", "Number processing" },
+        RequiredParameters = new[] { "expression" },
+        OptionalParameters = new string[0],
+        ExampleInvocation = "MathEvaluator with expression=\"2 + 3 * 4\" to calculate result",
+        ExpectedOutput = "Numerical result of the expression evaluation",
+        RequiresFileSystem = false,
+        RequiresNetwork = false,
+        SafetyNotes = "Sandboxed evaluation - no code execution, only safe mathematical operations",
+        PerformanceNotes = "Very fast operation, suitable for real-time calculations")]
+    [ToolCapabilities(
+        ToolCapability.MathCalculation | ToolCapability.MathEvaluation,
+        FallbackStrategy = "Built-in .NET mathematical operations with expression parsing")]
     public class MathEvaluator : AbstractTool
     {
         public override string Name => "MathEvaluator";

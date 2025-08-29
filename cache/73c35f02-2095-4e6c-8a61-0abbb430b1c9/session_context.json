@@ -1,8 +1,0 @@
-{
-  "SessionId": "73c35f02-2095-4e6c-8a61-0abbb430b1c9",
-  "Strategy": "Pessimistic",
-  "InitialPrompt": "create a simple test.txt file and list current directory contents",
-  "SessionRoot": "D:\\git\\ppotepa\\ollama-agent-suite\\cache\\73c35f02-2095-4e6c-8a61-0abbb430b1c9",
-  "CurrentDirectory": "D:\\git\\ppotepa\\ollama-agent-suite\\cache\\73c35f02-2095-4e6c-8a61-0abbb430b1c9",
-  "CreatedAt": "2025-08-29T13:21:33.2688767Z"
-}

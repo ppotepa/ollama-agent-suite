@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,24 @@ namespace Ollama.Infrastructure.Tools.File
     /// File copy tool - equivalent to 'copy' or 'cp' command
     /// Copies files within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Copies files within session boundaries",
+        "Equivalent to 'copy' or 'cp' command. Creates exact duplicates of files with support for overwrite protection and attribute preservation. All operations within session workspace.",
+        "File Operations")]
+    [ToolUsage(
+        "Copy files within the session workspace",
+        SecondaryUseCases = new[] { "File duplication", "Backup creation", "File replication", "Template copying" },
+        RequiredParameters = new[] { "sourcePath", "destinationPath" },
+        OptionalParameters = new[] { "cd", "overwrite", "preserveAttributes" },
+        ExampleInvocation = "FileCopy with sourcePath=\"original.txt\" destinationPath=\"copy.txt\"",
+        ExpectedOutput = "Successfully copied file to destination",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All operations within session boundaries",
+        PerformanceNotes = "Large files may take time to copy")]
+    [ToolCapabilities(
+        ToolCapability.FileCopy | ToolCapability.FileRead | ToolCapability.FileWrite | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Stream-based copy if direct file copy fails")]
     public class FileCopyTool : AbstractTool
     {
         public override string Name => "FileCopy";

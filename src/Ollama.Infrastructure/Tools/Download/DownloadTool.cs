@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -11,6 +12,24 @@ namespace Ollama.Infrastructure.Tools.Download
     /// Comprehensive download tool supporting multiple sources (GitHub, GitLab, NuGet, etc.)
     /// Downloads files and repositories to session directories with cursor navigation support
     /// </summary>
+    [ToolDescription(
+        "Downloads files, repositories, and packages from various sources",
+        "Comprehensive download tool supporting GitHub, GitLab, NuGet, and direct URL downloads. Automatically handles different file types including archives with extraction capabilities.",
+        "Network Operations")]
+    [ToolUsage(
+        "Download files and repositories from various online sources",
+        SecondaryUseCases = new[] { "Repository downloading", "Package retrieval", "File downloading", "Archive extraction" },
+        RequiredParameters = new[] { "url" },
+        OptionalParameters = new[] { "cd", "targetDirectory", "extractArchive", "filename" },
+        ExampleInvocation = "Download with url=\"https://github.com/user/repo\" to download repository",
+        ExpectedOutput = "Successfully downloaded and optionally extracted files",
+        RequiresFileSystem = true,
+        RequiresNetwork = true,
+        SafetyNotes = "Downloads only to session workspace - cannot escape boundaries",
+        PerformanceNotes = "Large downloads may take time - supports progress tracking")]
+    [ToolCapabilities(
+        ToolCapability.NetworkDownload | ToolCapability.GitHubDownload | ToolCapability.ArchiveExtraction | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Multiple download strategies: direct HTTP, specialized API calls, alternative protocols")]
     public class DownloadTool : AbstractTool
     {
         private readonly HttpClient _httpClient;

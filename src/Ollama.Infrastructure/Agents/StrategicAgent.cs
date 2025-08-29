@@ -545,6 +545,10 @@ public class StrategicAgent : IAgent
             _logger.LogInformation("Session {SessionId}: Executing tool {Tool} with enhanced retry mechanism", 
                 sessionId, toolName);
             
+            // Log parameters being passed to tool for debugging
+            _logger.LogDebug("Session {SessionId}: Tool {Tool} parameters: {Parameters}", 
+                sessionId, toolName, string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}")));
+            
             // Handle MISSING_TOOL requests with reflection-based tool discovery
             if (toolName.Equals("MISSING_TOOL", StringComparison.OrdinalIgnoreCase))
             {
@@ -590,7 +594,14 @@ public class StrategicAgent : IAgent
             {
                 _logger.LogInformation("Session {SessionId}: Tool {Tool} executed successfully using method {Method} after {Attempts} attempts", 
                     sessionId, toolName, result.MethodUsed, result.TotalAttempts);
-                return result.Output?.ToString() ?? "Tool executed successfully";
+                
+                // Serialize complex objects to JSON for proper logging
+                if (result.Output != null)
+                {
+                    return result.Output is string str ? str : 
+                           JsonSerializer.Serialize(result.Output, new JsonSerializerOptions { WriteIndented = true });
+                }
+                return "Tool executed successfully";
             }
             else
             {

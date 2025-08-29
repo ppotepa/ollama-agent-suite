@@ -1,5 +1,6 @@
 using Ollama.Domain.Strategies;
 using System.Text.Json;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using System.IO;
 using Ollama.Domain.Tools;
@@ -505,8 +506,11 @@ Continue processing with extreme caution. Verify everything before drawing concl
                 return CreateErrorResponse("Response does not contain valid JSON");
             }
             
+            // Normalize JSON to fix common formatting issues
+            var normalizedJson = NormalizeJsonForParsing(cleanJson);
+            
             // Parse the extracted JSON
-            var responseObject = JsonSerializer.Deserialize<JsonElement>(cleanJson);
+            var responseObject = JsonSerializer.Deserialize<JsonElement>(normalizedJson);
             
             _logger?.LogDebug("JSON parsing successful for session {SessionId}", sessionId);
             
@@ -1097,5 +1101,72 @@ Continue processing with extreme caution. Verify everything before drawing concl
         }
         
         return string.Join('\n', cleanedLines);
+    }
+    
+    private string NormalizeJsonForParsing(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return json;
+        
+        // Fix common JSON formatting issues that break parsing
+        // This handles unescaped newlines and carriage returns in string values
+        
+        var result = new StringBuilder();
+        bool inString = false;
+        bool escaped = false;
+        
+        for (int i = 0; i < json.Length; i++)
+        {
+            char c = json[i];
+            
+            if (escaped)
+            {
+                // Keep escaped characters as-is
+                result.Append(c);
+                escaped = false;
+                continue;
+            }
+            
+            if (c == '\\')
+            {
+                escaped = true;
+                result.Append(c);
+                continue;
+            }
+            
+            if (c == '"')
+            {
+                inString = !inString;
+                result.Append(c);
+                continue;
+            }
+            
+            if (inString)
+            {
+                // Inside a string - escape problematic characters
+                switch (c)
+                {
+                    case '\r':
+                        result.Append("\\r");
+                        break;
+                    case '\n':
+                        result.Append("\\n");
+                        break;
+                    case '\t':
+                        result.Append("\\t");
+                        break;
+                    default:
+                        result.Append(c);
+                        break;
+                }
+            }
+            else
+            {
+                // Outside string - keep as-is
+                result.Append(c);
+            }
+        }
+        
+        return result.ToString();
     }
 }

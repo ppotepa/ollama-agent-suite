@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
@@ -11,6 +12,24 @@ namespace Ollama.Infrastructure.Tools
     /// Used primarily for retry scenarios with commands like git clone, curl, wget, etc.
     /// SECURITY: All commands are executed within session boundaries and cannot escape.
     /// </summary>
+    [ToolDescription(
+        "Executes external command-line tools within session boundaries",
+        "Fallback mechanism for executing external commands like git, curl, wget. All execution is sandboxed within session boundaries for security. Used when specialized tools fail or are unavailable.",
+        "System Operations")]
+    [ToolUsage(
+        "Execute external commands as fallback when specialized tools fail",
+        SecondaryUseCases = new[] { "Git operations", "Network downloads", "System utilities", "Legacy command support" },
+        RequiredParameters = new[] { "command" },
+        OptionalParameters = new[] { "arguments", "workingDirectory", "timeout" },
+        ExampleInvocation = "ExternalCommandExecutor with command=\"git clone https://github.com/user/repo\"",
+        ExpectedOutput = "Command execution result with stdout, stderr, and exit code",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All commands execute within session boundaries - cannot escape sandbox",
+        PerformanceNotes = "Performance depends on external command - use timeouts")]
+    [ToolCapabilities(
+        ToolCapability.SystemCommand | ToolCapability.SystemProcess,
+        FallbackStrategy = "Built-in process execution with configurable timeouts")]
     public class ExternalCommandExecutor : AbstractTool
     {
         private readonly ISessionFileSystem _sessionFileSystem;

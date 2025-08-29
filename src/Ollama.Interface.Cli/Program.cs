@@ -113,7 +113,7 @@ try
     {
         Console.WriteLine($"  Processing arg {i}: {args[i]}");
         
-        if ((args[i] == "query" || args[i] == "--query") && i + 1 < args.Length)
+        if ((args[i] == "query" || args[i] == "--query" || args[i] == "-q") && i + 1 < args.Length)
         {
             // The next argument is the actual query text
             query = args[i + 1];
@@ -138,6 +138,7 @@ try
             Console.WriteLine();
             Console.WriteLine("Options:");
             Console.WriteLine("  query <text>          The query to process");
+            Console.WriteLine("  -q, --query <text>    The query to process (short form)");
             Console.WriteLine("  --verbose             Enable verbose output");
             Console.WriteLine("  -nc, --no-cache       Clear cache before running");
             Console.WriteLine("  --help, -h            Show this help message");

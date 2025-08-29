@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,24 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory deletion tool - equivalent to 'rmdir' or 'rd' command
     /// Deletes directories within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Deletes directories and their contents within session boundaries",
+        "Equivalent to 'rmdir' or 'rd' command. Safely removes directories with recursive deletion options. All operations are contained within session boundaries.",
+        "Directory Operations")]
+    [ToolUsage(
+        "Delete directories and their contents from session workspace",
+        SecondaryUseCases = new[] { "Cleanup operations", "Directory removal", "Space management", "Structure reorganization" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "cd", "recursive", "force" },
+        ExampleInvocation = "DirectoryDelete with path=\"temp-folder\" to remove directory",
+        ExpectedOutput = "Successfully deleted directory and contents",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "Destructive operation - use with caution. Cannot escape session boundaries",
+        PerformanceNotes = "Large directories may take time to delete completely")]
+    [ToolCapabilities(
+        ToolCapability.DirectoryDelete | ToolCapability.FileDelete | ToolCapability.CursorNavigation,
+        FallbackStrategy = "File-by-file deletion if bulk deletion fails")]
     public class DirectoryDeleteTool : AbstractTool
     {
         public override string Name => "DirectoryDelete";

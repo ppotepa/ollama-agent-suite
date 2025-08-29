@@ -216,6 +216,39 @@ Examples of missing tool responses:
 - Need text processing: requiredToolName: "TextProcessor", capabilities: ["regex:match", "file:grep", "text:replace"] 
 - Need API testing: requiredToolName: "ApiTester", capabilities: ["http:request", "response:validate", "auth:test"]
 
+CRITICAL ERROR REPORTING FOR MISSING TOOLS:
+===========================================
+When a tool is missing or insufficient, you MUST provide an ERROR response that includes:
+
+1. **EXACT TOOL NAME REQUIRED**: Specify the precise name of the missing tool
+2. **REQUIRED PARAMETERS**: List all parameters the tool must accept
+3. **EXPECTED CAPABILITIES**: Detail what functionality the tool must provide
+4. **INTEGRATION REQUIREMENTS**: Explain how it should integrate with the existing system
+
+ERROR RESPONSE FORMAT for missing tools:
+{
+  "taskCompleted": false,
+  "nextStep": {
+    "reasoning": "ERROR: Required tool '[EXACT_TOOL_NAME]' is missing from the system. This tool must support the following parameters: [param1: type, param2: type]. Required capabilities: [capability1, capability2]. Cannot proceed without this tool implementation.",
+    "requiresTool": true,
+    "tool": "MISSING_TOOL",
+    "parameters": {
+      "requiredToolName": "[EXACT_TOOL_NAME]",
+      "requiredParameters": {
+        "param1": "string - description of parameter",
+        "param2": "object - description of parameter structure"
+      },
+      "requiredCapabilities": ["specific:capability1", "specific:capability2"],
+      "sessionSafetyRequirements": "Must operate within session boundaries",
+      "reason": "Detailed technical explanation of why this specific tool is required"
+    },
+    "confidence": 0.0,
+    "assumptions": ["Tool implementation will follow session safety requirements"],
+    "risks": ["Cannot complete task without proper tool implementation"]
+  },
+  "response": "ERROR: Cannot complete this task. Missing required tool '[EXACT_TOOL_NAME]' with parameters [param1, param2] and capabilities [capability1, capability2]. Please implement this tool to proceed."
+}
+
 NEVER attempt to use external tools or system commands that aren't listed above.
 
 DECISION MAKING:

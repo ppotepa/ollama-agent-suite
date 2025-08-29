@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,24 @@ namespace Ollama.Infrastructure.Tools.File
     /// File delete tool - equivalent to 'del' or 'rm' command
     /// Deletes files within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Deletes files within session boundaries",
+        "Equivalent to 'del' or 'rm' command. Safely removes files from the session workspace with optional backup and confirmation features.",
+        "File Operations")]
+    [ToolUsage(
+        "Delete files from the session workspace",
+        SecondaryUseCases = new[] { "File cleanup", "Temporary file removal", "Space management", "Content deletion" },
+        RequiredParameters = new[] { "path" },
+        OptionalParameters = new[] { "cd", "force", "backup" },
+        ExampleInvocation = "FileDelete with path=\"temp.txt\" to remove file",
+        ExpectedOutput = "Successfully deleted specified file",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "Destructive operation - use with caution. Cannot escape session boundaries",
+        PerformanceNotes = "Fast operation for single files")]
+    [ToolCapabilities(
+        ToolCapability.FileDelete | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Force deletion if standard deletion fails")]
     public class FileDeleteTool : AbstractTool
     {
         public FileDeleteTool(ISessionScope sessionScope, ILogger<FileDeleteTool> logger)

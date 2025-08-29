@@ -1,4 +1,5 @@
 using Ollama.Domain.Tools;
+using Ollama.Domain.Tools.Attributes;
 using Ollama.Domain.Services;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,24 @@ namespace Ollama.Infrastructure.Tools.Directory
     /// Directory move/rename tool - equivalent to 'move' or 'mv' command
     /// Moves or renames directories within session boundaries
     /// </summary>
+    [ToolDescription(
+        "Moves or renames directories within session boundaries",
+        "Equivalent to 'move' or 'mv' command. Relocates directories from one location to another within the session workspace. Can also be used for directory renaming.",
+        "Directory Operations")]
+    [ToolUsage(
+        "Move or rename directories in session workspace",
+        SecondaryUseCases = new[] { "Directory relocation", "Directory renaming", "Structure reorganization", "Workspace cleanup" },
+        RequiredParameters = new[] { "sourcePath", "destinationPath" },
+        OptionalParameters = new[] { "cd", "overwrite" },
+        ExampleInvocation = "DirectoryMove with sourcePath=\"old-name\" destinationPath=\"new-name\"",
+        ExpectedOutput = "Successfully moved/renamed directory",
+        RequiresFileSystem = true,
+        RequiresNetwork = false,
+        SafetyNotes = "All operations within session boundaries",
+        PerformanceNotes = "Large directories may take time to move")]
+    [ToolCapabilities(
+        ToolCapability.DirectoryMove | ToolCapability.CursorNavigation,
+        FallbackStrategy = "Copy and delete if direct move fails")]
     public class DirectoryMoveTool : AbstractTool
     {
         public DirectoryMoveTool(ISessionScope sessionScope, ILogger<DirectoryMoveTool> logger)
