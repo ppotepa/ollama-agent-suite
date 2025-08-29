@@ -3,6 +3,7 @@ namespace Ollama.Domain.Agents;
 public interface IAgent
 {
     string Answer(string prompt, string? sessionId = null);
+    Task<string> AnswerAsync(string prompt, string? sessionId = null);
     string Think(string prompt);
     string Think(string prompt, string? sessionId);
     object Plan(string prompt);

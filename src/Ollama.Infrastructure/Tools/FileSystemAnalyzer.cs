@@ -12,7 +12,56 @@ namespace Ollama.Infrastructure.Tools
         "File System Analysis")]
     [ToolUsage(
         "Analyze file system structure and generate detailed reports",
-        SecondaryUseCases = new[] { "Directory analysis", "File size reporting", "Storage insights", "File type distribution" },
+        SecondaryUseCases = new[] { 
+            "Directory analysis", 
+            "File size reporting", 
+            "Storage insights", 
+            "File type distribution",
+            // Backend Project Analysis
+            "Project structure assessment",
+            "Code organization analysis",
+            "Dependency file detection (.csproj, package.json, requirements.txt)",
+            "Configuration file identification (appsettings.json, web.config)",
+            "Build artifact analysis (bin/, obj/, dist/)",
+            "Source code distribution analysis",
+            // Architecture Analysis
+            "Clean architecture layer detection",
+            "Microservice project structure analysis",
+            "Domain-driven design structure assessment",
+            "Test project organization analysis",
+            "Documentation structure evaluation",
+            // Database Project Analysis
+            "Migration file detection and analysis",
+            "Database script organization",
+            "Entity model file distribution",
+            "Data seeding file analysis",
+            // DevOps Structure Analysis
+            "Docker configuration detection (Dockerfile, docker-compose.yml)",
+            "CI/CD pipeline file analysis (.github/, .azure/, jenkins/)",
+            "Infrastructure as Code file detection (terraform/, pulumi/)",
+            "Kubernetes manifest analysis",
+            "Deployment script organization",
+            // Security & Configuration Analysis
+            "Security configuration file detection",
+            "Environment configuration analysis",
+            "Certificate and key file identification",
+            "Logging configuration assessment",
+            // Code Quality Analysis
+            "Test coverage file analysis",
+            "Code quality configuration detection (.editorconfig, .eslintrc)",
+            "Static analysis configuration assessment",
+            "Code style configuration analysis",
+            // Package & Dependency Analysis
+            "Package manager file analysis (packages/, node_modules/)",
+            "NuGet package structure analysis",
+            "Third-party library organization",
+            "Framework file distribution",
+            // Build & Deployment Analysis
+            "Build configuration analysis (MSBuild, webpack, etc.)",
+            "Output directory structure assessment",
+            "Release artifact organization",
+            "Environment-specific build analysis"
+        },
         RequiredParameters = new[] { "path" },
         OptionalParameters = new[] { "includeSubdirectories", "maxDepth", "includeHidden" },
         ExampleInvocation = "FileSystemAnalyzer with path=\".\" to analyze current directory",
@@ -22,7 +71,10 @@ namespace Ollama.Infrastructure.Tools
         SafetyNotes = "Read-only analysis within session boundaries",
         PerformanceNotes = "Large directories may take time to analyze")]
     [ToolCapabilities(
-        ToolCapability.FileSystemAnalysis | ToolCapability.DirectoryList | ToolCapability.DataAnalysis,
+        ToolCapability.FileSystemAnalysis | ToolCapability.DirectoryList | ToolCapability.DataAnalysis | 
+        ToolCapability.BackendDevelopment | ToolCapability.DatabaseDevelopment | 
+        ToolCapability.DevOpsDevelopment | ToolCapability.TestingInfrastructure | 
+        ToolCapability.ArchitecturalPatterns,
         FallbackStrategy = "Basic directory listing if advanced analysis fails")]
     public class FileSystemAnalyzer : AbstractTool
     {

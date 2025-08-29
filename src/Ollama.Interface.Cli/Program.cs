@@ -10,6 +10,8 @@ using Ollama.Domain.Services;
 using Ollama.Infrastructure.Services;
 using Ollama.Infrastructure.Clients;
 using Ollama.Infrastructure.Agents;
+using Ollama.Infrastructure.Interactive;
+using Ollama.Domain.Agents;
 using Ollama.Domain.Tools;
 using Ollama.Interface.Cli;
 
@@ -33,6 +35,14 @@ if (args.Length > 0 && args[0] == "schema-demo")
 {
     Console.WriteLine("\n🎯 Running Schema Communication Demo...\n");
     SchemaDemo.DemonstrateSchemas();
+    return 0;
+}
+
+// Check for new schema system demo
+if (args.Length > 0 && args[0] == "schema-system-demo")
+{
+    Console.WriteLine("\n🎯 Running Generic Response Schema System Demo...\n");
+    SchemaSystemDemo.DemonstrateSchemaSystem();
     return 0;
 }
 
@@ -72,6 +82,11 @@ try
     var pythonSubsystemPath = Path.Combine(solutionRoot, "python_subsystem");
     builder.Configuration["PythonSubsystem:Path"] = pythonSubsystemPath;
     Console.WriteLine($"📁 Setting Python subsystem path to: {pythonSubsystemPath}");
+    
+    // Update prompt path to be relative to solution root
+    var promptPath = Path.Combine(solutionRoot, "prompts");
+    builder.Configuration["PromptConfiguration:PromptBasePath"] = promptPath;
+    Console.WriteLine($"📁 Setting prompt path to: {promptPath}");
 
     Console.WriteLine("🔧 Registering services...");
     
@@ -85,6 +100,14 @@ try
         Console.WriteLine("  - Adding Ollama services...");
         builder.Services.AddOllamaServices();
         Console.WriteLine("  - Ollama services added successfully");
+        
+        Console.WriteLine("  - Adding interactive mode services...");
+        builder.Services.AddInteractiveMode();
+        
+        // Register IAgent interface for interactive mode
+        builder.Services.AddSingleton<IAgent>(provider => 
+            provider.GetRequiredService<StrategicAgent>());
+        Console.WriteLine("  - Interactive mode services added successfully");
     }
     catch (Exception ex)
     {
@@ -96,6 +119,9 @@ try
     
     using var app = builder.Build();
     
+    // Configure interceptor chain for interactive mode
+    app.Services.ConfigureInterceptorChain();
+    
     Console.WriteLine("✅ Application built successfully");
 
     // Get logger
@@ -106,6 +132,7 @@ try
     string? query = null;
     bool verbose = false;
     bool clearCache = false; // New flag for -nc (no cache)
+    bool interactiveMode = false; // New flag for interactive mode
 
     Console.WriteLine("📋 Parsing command line arguments...");
 
@@ -130,6 +157,11 @@ try
             clearCache = true;
             Console.WriteLine($"  Found no-cache flag - cache will be cleared");
         }
+        else if (args[i] == "--interactive" || args[i] == "-i")
+        {
+            interactiveMode = true;
+            Console.WriteLine($"  Found interactive mode flag");
+        }
         else if (args[i] == "--help" || args[i] == "-h")
         {
             Console.WriteLine("🤖 Ollama Agent Suite - Backend Development AI Assistant");
@@ -141,6 +173,7 @@ try
             Console.WriteLine("  -q, --query <text>    The query to process (short form)");
             Console.WriteLine("  --verbose             Enable verbose output");
             Console.WriteLine("  -nc, --no-cache       Clear cache before running");
+            Console.WriteLine("  -i, --interactive     Start interactive mode");
             Console.WriteLine("  --help, -h            Show this help message");
             Console.WriteLine();
             Console.WriteLine("Strategy Configuration:");
@@ -154,11 +187,40 @@ try
             Console.WriteLine("  dotnet run -- query \"Create user authentication system\"");
             Console.WriteLine("  dotnet run -- query \"Analyze this GitHub repository\" --verbose");
             Console.WriteLine("  dotnet run -- query \"Download and examine code quality\" -nc");
+            Console.WriteLine("  dotnet run -- --interactive");
             return 0;
         }
     }
 
-    Console.WriteLine($"📋 Parsed arguments - Query: '{query}', Verbose: {verbose}, ClearCache: {clearCache}");
+    Console.WriteLine($"📋 Parsed arguments - Query: '{query}', Verbose: {verbose}, ClearCache: {clearCache}, Interactive: {interactiveMode}");
+
+    // Handle interactive mode first
+    if (interactiveMode)
+    {
+        Console.WriteLine("🚀 Starting Interactive Mode...");
+        
+        // Clear cache if requested in interactive mode
+        if (clearCache)
+        {
+            try
+            {
+                Console.WriteLine("🧹 No-cache flag specified - clearing cache...");
+                var sessionFileSystem = app.Services.GetRequiredService<ISessionFileSystem>();
+                sessionFileSystem.ClearEntireCache();
+                Console.WriteLine("✅ Cache cleared successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ Failed to clear cache: {ex.Message}");
+                logger?.LogWarning(ex, "Failed to clear cache on startup");
+            }
+        }
+        
+        // Start interactive session
+        var sessionHandler = app.Services.GetRequiredService<InteractiveSessionHandler>();
+        await sessionHandler.StartInteractiveSessionAsync();
+        return 0;
+    }
 
     // Clear cache if -nc flag is specified
     if (clearCache)

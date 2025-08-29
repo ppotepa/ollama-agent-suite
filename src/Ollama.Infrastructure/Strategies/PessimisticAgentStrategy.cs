@@ -498,21 +498,24 @@ Continue processing with extreme caution. Verify everything before drawing concl
                 return CreateErrorResponse("Empty response from LLM");
             }
             
-            // Extract JSON from potentially malformed response
-            var cleanJson = ExtractJsonFromResponse(response);
-            if (string.IsNullOrEmpty(cleanJson))
+            // Try multiple parsing strategies with fallbacks
+            var responseObject = TryParseWithFallbacks(response, sessionId);
+            if (responseObject == null || !responseObject.HasValue)
             {
-                _logger?.LogError("Could not extract valid JSON from response for session {SessionId}", sessionId);
-                return CreateErrorResponse("Response does not contain valid JSON");
+                _logger?.LogError("All parsing strategies failed for session {SessionId}", sessionId);
+                return CreateErrorResponse("Could not parse response in any supported format");
+            }
+
+            var responseObjectValue = responseObject.Value;
+            _logger?.LogDebug("JSON parsing successful for session {SessionId}", sessionId);
+            
+            if (responseObject == null)
+            {
+                _logger?.LogError("Failed to parse response for session {SessionId}", sessionId);
+                return CreateErrorResponse("Could not parse response in any supported format");
             }
             
-            // Normalize JSON to fix common formatting issues
-            var normalizedJson = NormalizeJsonForParsing(cleanJson);
-            
-            // Parse the extracted JSON
-            var responseObject = JsonSerializer.Deserialize<JsonElement>(normalizedJson);
-            
-            _logger?.LogDebug("JSON parsing successful for session {SessionId}", sessionId);
+            var actualResponseObject = responseObject.Value;
             
             // Check required fields for new structure
             var requiredFields = new[] { "taskCompleted", "nextStep", "response" };
@@ -520,7 +523,7 @@ Continue processing with extreme caution. Verify everything before drawing concl
             
             foreach (var field in requiredFields)
             {
-                if (!responseObject.TryGetProperty(field, out _))
+                if (!responseObjectValue.TryGetProperty(field, out _))
                 {
                     missingFields.Add(field);
                 }
@@ -532,13 +535,13 @@ Continue processing with extreme caution. Verify everything before drawing concl
                 _logger?.LogWarning("Response missing some expected fields: {Fields}. Attempting to normalize...", 
                     string.Join(", ", missingFields));
                 
-                var normalizedResponse = NormalizeResponseFormat(responseObject, sessionId ?? "unknown");
+                var normalizedResponse = NormalizeResponseFormat(responseObjectValue, sessionId ?? "unknown");
                 return JsonSerializer.Serialize(normalizedResponse, new JsonSerializerOptions { WriteIndented = true });
             }
             
             // Extract key information for validation
-            var taskCompleted = responseObject.GetProperty("taskCompleted").GetBoolean();
-            var nextStep = responseObject.TryGetProperty("nextStep", out var nextStepElement) ? nextStepElement : (JsonElement?)null;
+            var taskCompleted = responseObjectValue.GetProperty("taskCompleted").GetBoolean();
+            var nextStep = responseObjectValue.TryGetProperty("nextStep", out var nextStepElement) ? nextStepElement : (JsonElement?)null;
             
             // Validate nextStep structure if present
             if (nextStep.HasValue && nextStep.Value.ValueKind == JsonValueKind.Object)
@@ -555,10 +558,10 @@ Continue processing with extreme caution. Verify everything before drawing concl
             }
             
             // Legacy field validation for backwards compatibility
-            var legacyTaskComplete = responseObject.TryGetProperty("taskComplete", out var taskCompleteElement) 
+            var legacyTaskComplete = responseObjectValue.TryGetProperty("taskComplete", out var taskCompleteElement) 
                 ? taskCompleteElement.GetBoolean() 
                 : taskCompleted;
-            var legacyConfidence = responseObject.TryGetProperty("confidence", out var legacyConfElement) 
+            var legacyConfidence = responseObjectValue.TryGetProperty("confidence", out var legacyConfElement) 
                 ? legacyConfElement.GetDouble() 
                 : 0.5;
             
@@ -582,7 +585,7 @@ Continue processing with extreme caution. Verify everything before drawing concl
             }
             
             // Legacy reasoning validation (for backwards compatibility)
-            if (string.IsNullOrEmpty(reasoning) && responseObject.TryGetProperty("reasoning", out var legacyReasoningElement))
+            if (string.IsNullOrEmpty(reasoning) && responseObjectValue.TryGetProperty("reasoning", out var legacyReasoningElement))
             {
                 reasoning = legacyReasoningElement.GetString() ?? "";
             }
@@ -984,6 +987,336 @@ Continue processing with extreme caution. Verify everything before drawing concl
         }
         
         return normalizedData;
+    }
+    
+    private JsonElement? TryParseWithFallbacks(string response, string? sessionId)
+    {
+        _logger?.LogDebug("Attempting to parse response with fallback strategies for session {SessionId}", sessionId);
+        
+        // Strategy 1: Standard JSON extraction and parsing
+        try
+        {
+            var cleanJson = ExtractJsonFromResponse(response);
+            if (!string.IsNullOrEmpty(cleanJson))
+            {
+                var normalizedJson = NormalizeJsonForParsing(cleanJson);
+                var responseObject = JsonSerializer.Deserialize<JsonElement>(normalizedJson);
+                _logger?.LogDebug("Strategy 1 (Standard JSON) succeeded for session {SessionId}", sessionId);
+                return responseObject;
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogWarning("Strategy 1 (Standard JSON) failed for session {SessionId}: {Error}", sessionId, ex.Message);
+        }
+        
+        // Strategy 2: YAML-like format parsing
+        try
+        {
+            var yamlParsed = TryParseYamlLikeFormat(response);
+            if (yamlParsed != null)
+            {
+                _logger?.LogDebug("Strategy 2 (YAML-like) succeeded for session {SessionId}", sessionId);
+                return yamlParsed;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning("Strategy 2 (YAML-like) failed for session {SessionId}: {Error}", sessionId, ex.Message);
+        }
+        
+        // Strategy 3: Key-value pair parsing
+        try
+        {
+            var kvParsed = TryParseKeyValueFormat(response);
+            if (kvParsed != null)
+            {
+                _logger?.LogDebug("Strategy 3 (Key-Value) succeeded for session {SessionId}", sessionId);
+                return kvParsed;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning("Strategy 3 (Key-Value) failed for session {SessionId}: {Error}", sessionId, ex.Message);
+        }
+        
+        // Strategy 4: Markdown-style parsing
+        try
+        {
+            var markdownParsed = TryParseMarkdownFormat(response);
+            if (markdownParsed != null)
+            {
+                _logger?.LogDebug("Strategy 4 (Markdown) succeeded for session {SessionId}", sessionId);
+                return markdownParsed;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning("Strategy 4 (Markdown) failed for session {SessionId}: {Error}", sessionId, ex.Message);
+        }
+        
+        // Strategy 5: Plain text interpretation
+        try
+        {
+            var textParsed = TryParseAsPlainText(response);
+            if (textParsed != null)
+            {
+                _logger?.LogDebug("Strategy 5 (Plain Text) succeeded for session {SessionId}", sessionId);
+                return textParsed;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning("Strategy 5 (Plain Text) failed for session {SessionId}: {Error}", sessionId, ex.Message);
+        }
+        
+        _logger?.LogError("All parsing strategies failed for session {SessionId}", sessionId);
+        return null;
+    }
+    
+    private JsonElement? TryParseYamlLikeFormat(string response)
+    {
+        // Look for YAML-like format:
+        // taskCompleted: true
+        // response: |
+        //   Here's your code:
+        //   ```csharp
+        //   // code here
+        //   ```
+        
+        var lines = response.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var result = new Dictionary<string, object>();
+        
+        string? currentKey = null;
+        var currentValue = new List<string>();
+        bool inMultilineValue = false;
+        
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+            
+            if (trimmedLine.Contains(':') && !inMultilineValue)
+            {
+                // Process previous key-value if exists
+                if (currentKey != null)
+                {
+                    result[currentKey] = currentValue.Count == 1 ? currentValue[0] : string.Join("\n", currentValue);
+                }
+                
+                var parts = trimmedLine.Split(':', 2);
+                currentKey = parts[0].Trim();
+                var value = parts.Length > 1 ? parts[1].Trim() : "";
+                
+                if (value == "|" || value == ">")
+                {
+                    inMultilineValue = true;
+                    currentValue = new List<string>();
+                }
+                else
+                {
+                    currentValue = new List<string> { value };
+                    inMultilineValue = false;
+                }
+            }
+            else if (inMultilineValue)
+            {
+                currentValue.Add(line);
+            }
+        }
+        
+        // Process last key-value
+        if (currentKey != null)
+        {
+            result[currentKey] = currentValue.Count == 1 ? currentValue[0] : string.Join("\n", currentValue);
+        }
+        
+        if (result.Count > 0)
+        {
+            // Convert to JsonElement
+            var json = JsonSerializer.Serialize(result);
+            return JsonSerializer.Deserialize<JsonElement>(json);
+        }
+        
+        return null;
+    }
+    
+    private JsonElement? TryParseKeyValueFormat(string response)
+    {
+        // Look for simple key-value pairs:
+        // Task Completed: true
+        // Response: Here's your code...
+        // Tool Required: false
+        
+        var result = new Dictionary<string, object>();
+        var lines = response.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+            if (trimmedLine.Contains(':'))
+            {
+                var parts = trimmedLine.Split(':', 2);
+                if (parts.Length == 2)
+                {
+                    var key = NormalizeKeyName(parts[0].Trim());
+                    var value = parts[1].Trim();
+                    
+                    // Try to parse boolean values
+                    if (bool.TryParse(value, out var boolValue))
+                    {
+                        result[key] = boolValue;
+                    }
+                    else
+                    {
+                        result[key] = value;
+                    }
+                }
+            }
+        }
+        
+        if (result.Count > 0)
+        {
+            // Ensure required fields exist
+            if (!result.ContainsKey("taskCompleted"))
+                result["taskCompleted"] = false;
+            if (!result.ContainsKey("response"))
+                result["response"] = response;
+            
+            var json = JsonSerializer.Serialize(result);
+            return JsonSerializer.Deserialize<JsonElement>(json);
+        }
+        
+        return null;
+    }
+    
+    private JsonElement? TryParseMarkdownFormat(string response)
+    {
+        // Look for markdown-style headers and content:
+        // ## Task Status: Complete
+        // ## Response
+        // Here's your code...
+        
+        var result = new Dictionary<string, object>();
+        var lines = response.Split('\n');
+        
+        string? currentSection = null;
+        var currentContent = new List<string>();
+        
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("##") || line.StartsWith("#"))
+            {
+                // Process previous section
+                if (currentSection != null && currentContent.Count > 0)
+                {
+                    var content = string.Join("\n", currentContent).Trim();
+                    result[currentSection] = content;
+                }
+                
+                // Start new section
+                currentSection = NormalizeKeyName(line.TrimStart('#').Trim());
+                currentContent = new List<string>();
+            }
+            else if (currentSection != null)
+            {
+                currentContent.Add(line);
+            }
+        }
+        
+        // Process last section
+        if (currentSection != null && currentContent.Count > 0)
+        {
+            var content = string.Join("\n", currentContent).Trim();
+            result[currentSection] = content;
+        }
+        
+        if (result.Count > 0)
+        {
+            // Ensure required fields exist
+            if (!result.ContainsKey("taskCompleted"))
+                result["taskCompleted"] = DetectTaskCompletion(response);
+            if (!result.ContainsKey("response"))
+                result["response"] = response;
+            
+            var json = JsonSerializer.Serialize(result);
+            return JsonSerializer.Deserialize<JsonElement>(json);
+        }
+        
+        return null;
+    }
+    
+    private JsonElement? TryParseAsPlainText(string response)
+    {
+        // Last resort: treat as plain text response
+        var result = new Dictionary<string, object>
+        {
+            ["taskCompleted"] = DetectTaskCompletion(response),
+            ["response"] = response,
+            ["nextStep"] = null!
+        };
+        
+        var json = JsonSerializer.Serialize(result);
+        return JsonSerializer.Deserialize<JsonElement>(json);
+    }
+    
+    private string NormalizeKeyName(string key)
+    {
+        // Convert various key formats to standard JSON property names
+        var normalized = key.ToLowerInvariant()
+            .Replace(" ", "")
+            .Replace("_", "")
+            .Replace("-", "");
+        
+        return normalized switch
+        {
+            "taskcompleted" or "taskstatus" or "completed" or "done" => "taskCompleted",
+            "nextstep" or "next" or "step" => "nextStep",
+            "response" or "answer" or "result" => "response",
+            "tool" or "toolname" => "tool",
+            "parameters" or "params" or "arguments" => "parameters",
+            "requirestool" or "toolrequired" or "usetool" => "requiresTool",
+            _ => normalized
+        };
+    }
+    
+    private bool DetectTaskCompletion(string response)
+    {
+        // Heuristics to detect if task is completed based on response content
+        var lowercaseResponse = response.ToLowerInvariant();
+        
+        var completionIndicators = new[]
+        {
+            "task completed", "task complete", "done", "finished", "complete",
+            "here's your", "here is your", "created successfully", "generated successfully"
+        };
+        
+        var incompletionIndicators = new[]
+        {
+            "need to", "requires", "next step", "continue", "more information needed",
+            "please provide", "clarification needed"
+        };
+        
+        // Check for explicit completion indicators
+        if (completionIndicators.Any(indicator => lowercaseResponse.Contains(indicator)))
+        {
+            return true;
+        }
+        
+        // Check for incompletion indicators
+        if (incompletionIndicators.Any(indicator => lowercaseResponse.Contains(indicator)))
+        {
+            return false;
+        }
+        
+        // If response contains code or detailed solution, likely completed
+        if (lowercaseResponse.Contains("```") || lowercaseResponse.Contains("namespace") || 
+            lowercaseResponse.Contains("class") || lowercaseResponse.Contains("function"))
+        {
+            return true;
+        }
+        
+        // Default to incomplete for safety
+        return false;
     }
     
     private string ExtractJsonFromResponse(string response)

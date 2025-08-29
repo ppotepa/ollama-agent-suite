@@ -37,7 +37,7 @@ public class StrategicAgent : IAgent
     private readonly ISessionFileSystem _sessionFileSystem;
     private readonly SessionLogger _sessionLogger;
     private readonly IToolRepository _toolRepository;
-    private readonly BuiltInOllamaClient _ollamaClient;
+    private readonly UnifiedLLMClient _llmClient;
     private readonly ILLMCommunicationService _communicationService;
     private readonly ILogger<StrategicAgent> _logger;
     private readonly string _model;
@@ -50,7 +50,7 @@ public class StrategicAgent : IAgent
         ISessionFileSystem sessionFileSystem,
         SessionLogger sessionLogger,
         IToolRepository toolRepository,
-        BuiltInOllamaClient ollamaClient,
+        UnifiedLLMClient llmClient,
         ILLMCommunicationService communicationService,
         ILogger<StrategicAgent> logger,
         string model = "llama3.1:8b")
@@ -59,7 +59,7 @@ public class StrategicAgent : IAgent
         _sessionFileSystem = sessionFileSystem;
         _sessionLogger = sessionLogger;
         _toolRepository = toolRepository;
-        _ollamaClient = ollamaClient;
+        _llmClient = llmClient;
         _communicationService = communicationService;
         _logger = logger;
         _model = model;
@@ -640,14 +640,14 @@ public class StrategicAgent : IAgent
             _logger.LogInformation("Session {SessionId}: Calling LLM with model {Model}", sessionId, _model);
             _logger.LogDebug("Session {SessionId}: Sending {MessageCount} messages to LLM", sessionId, conversation.Count);
             
-            // Convert ConversationEntry to tuple format for Ollama client
+            // Convert ConversationEntry to tuple format for Unified LLM client
             var ollamaConversation = conversation.Select(msg => (msg.Role, msg.Content)).ToList();
             
-            // Call the Ollama API with the full conversation history
-            var response = await _ollamaClient.ChatAsync(_model, ollamaConversation);
+            // Call the LLM API with the full conversation history
+            var response = await _llmClient.ChatAsync(_model, ollamaConversation);
             
-            _logger.LogInformation("Session {SessionId}: Received LLM response ({Length} chars)", 
-                sessionId, response.Length);
+            _logger.LogInformation("Session {SessionId}: Received LLM response from {ClientType} ({Length} chars)", 
+                sessionId, _llmClient.ClientType, response.Length);
             
             return response;
         }
@@ -935,10 +935,10 @@ public class StrategicAgent : IAgent
             _logger.LogDebug("Session {SessionId}: System prompt length: {SystemLength}, User prompt length: {UserLength}", 
                 sessionId, systemPrompt.Length, userPrompt.Length);
 
-            var response = await _ollamaClient.ChatAsync(_model, messages);
+            var response = await _llmClient.ChatAsync(_model, messages);
             
-            _logger.LogDebug("Session {SessionId}: Received LLM response with {Length} characters", 
-                sessionId, response.Length);
+            _logger.LogDebug("Session {SessionId}: Received LLM response from {ClientType} with {Length} characters", 
+                sessionId, _llmClient.ClientType, response.Length);
 
             return response;
         }

@@ -42,6 +42,21 @@ public static class ServiceRegistration
         services.AddSingleton<OllamaSettings>(provider => new OllamaSettings());
         services.AddHttpClient<BuiltInOllamaClient>();
         
+        // Register unified LLM client system
+        services.AddHttpClient<Infrastructure.Factories.LLMClientFactory>(); // For factory usage
+        services.AddSingleton<Infrastructure.Factories.ILLMClientFactory>(provider =>
+        {
+            var appSettings = provider.GetRequiredService<AppSettings>();
+            var ollamaSettings = provider.GetRequiredService<OllamaSettings>();
+            var lmStudioSettings = provider.GetRequiredService<LMStudioSettings>();
+            var httpClient = provider.GetRequiredService<HttpClient>();
+            var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+            
+            return new Infrastructure.Factories.LLMClientFactory(
+                appSettings, ollamaSettings, lmStudioSettings, httpClient, loggerFactory);
+        });
+        services.AddSingleton<Infrastructure.Clients.UnifiedLLMClient>();
+        
         // Register legacy tools (to be converted to AbstractTool)
         services.AddTransient<MathEvaluator>();
         services.AddTransient<GitHubRepositoryDownloader>(provider => 
@@ -123,13 +138,28 @@ public static class ServiceRegistration
         
         // Register prompt system services
         services.AddSingleton<Ollama.Domain.Configuration.PromptConfiguration>(provider => 
-            new Ollama.Domain.Configuration.PromptConfiguration
+        {
+            var configuration = provider.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+            var promptConfig = new Ollama.Domain.Configuration.PromptConfiguration
             {
                 PromptBasePath = "prompts",
-                PessimisticPromptFileName = "pessimistic-simple-system-prompt.txt",
+                PessimisticPromptFileName = "pessimistic-initial-system-prompt.txt",
                 RequirePromptFiles = true,
                 MaxPromptFileSize = 1048576 // 1MB
-            });
+            };
+            
+            // Override with configuration if available
+            if (configuration != null)
+            {
+                var promptBasePath = configuration["PromptConfiguration:PromptBasePath"];
+                if (!string.IsNullOrEmpty(promptBasePath))
+                {
+                    promptConfig.PromptBasePath = promptBasePath;
+                }
+            }
+            
+            return promptConfig;
+        });
         
         services.AddSingleton<Ollama.Domain.Prompts.IPlaceholderDecorator, Ollama.Infrastructure.Prompts.ToolReflectionDecorator>();
         services.AddSingleton<Ollama.Infrastructure.Prompts.PromptService>();
@@ -143,7 +173,7 @@ public static class ServiceRegistration
             var sessionFileSystem = provider.GetRequiredService<ISessionFileSystem>();
             var sessionLogger = provider.GetRequiredService<Ollama.Infrastructure.Services.SessionLogger>();
             var toolRepository = provider.GetRequiredService<IToolRepository>();
-            var ollamaClient = provider.GetRequiredService<BuiltInOllamaClient>();
+            var ollamaClient = provider.GetRequiredService<Infrastructure.Clients.UnifiedLLMClient>();
             var communicationService = provider.GetRequiredService<ILLMCommunicationService>();
             var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ollama.Infrastructure.Agents.StrategicAgent>>();
             var ollamaSettings = provider.GetRequiredService<OllamaSettings>();

@@ -15,7 +15,40 @@ namespace Ollama.Infrastructure.Tools.Directory
         "Directory Operations")]
     [ToolUsage(
         "Create new directories in the session workspace",
-        SecondaryUseCases = new[] { "Folder creation", "Directory structure setup", "Workspace organization", "Path preparation" },
+        SecondaryUseCases = new[] { 
+            "Folder creation", 
+            "Directory structure setup", 
+            "Workspace organization", 
+            "Path preparation",
+            // Backend Project Structure
+            "Project root directory creation",
+            "Source code folder structure (src/, Controllers/, Services/, Models/)",
+            "Test project organization (tests/, UnitTests/, IntegrationTests/)",
+            "Configuration directories (config/, appsettings/)",
+            "Static content folders (wwwroot/, assets/, images/)",
+            "Data layer organization (Data/, Repositories/, Migrations/)",
+            // Clean Architecture Structure
+            "Domain layer directory (Domain/, Entities/, ValueObjects/)",
+            "Application layer directory (Application/, Commands/, Queries/)",
+            "Infrastructure layer directory (Infrastructure/, Persistence/, Services/)",
+            "Presentation layer directory (API/, Controllers/, DTOs/)",
+            // DevOps Structure
+            "Docker configuration directories (.docker/, scripts/)",
+            "CI/CD pipeline directories (.github/, .azure/, pipelines/)",
+            "Documentation structure (docs/, api-docs/, architecture/)",
+            "Build and deployment directories (build/, deploy/, release/)",
+            // Testing Organization
+            "Test category directories (unit/, integration/, e2e/)",
+            "Test data directories (TestData/, Fixtures/, Mocks/)",
+            "Performance test structure (PerformanceTests/, LoadTests/)",
+            // Database Organization
+            "Migration directories (Migrations/, Scripts/, Seed/)",
+            "Schema organization (Schemas/, Views/, Procedures/)",
+            // Security and Configuration
+            "Certificate storage (certs/, keys/)",
+            "Environment configuration (environments/, configs/)",
+            "Logging directories (logs/, audit/)"
+        },
         RequiredParameters = new[] { "path" },
         OptionalParameters = new[] { "cd", "recursive" },
         ExampleInvocation = "DirectoryCreate with path=\"new-folder\" to create directory",
@@ -25,7 +58,9 @@ namespace Ollama.Infrastructure.Tools.Directory
         SafetyNotes = "All operations within session boundaries",
         PerformanceNotes = "Fast operation for single directories")]
     [ToolCapabilities(
-        ToolCapability.DirectoryCreate | ToolCapability.CursorNavigation,
+        ToolCapability.DirectoryCreate | ToolCapability.CursorNavigation | 
+        ToolCapability.BackendDevelopment | ToolCapability.TestingInfrastructure | 
+        ToolCapability.DevOpsDevelopment | ToolCapability.DatabaseDevelopment,
         FallbackStrategy = "Recursive creation if direct creation fails")]
     public class DirectoryCreateTool : AbstractTool
     {

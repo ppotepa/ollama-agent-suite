@@ -19,6 +19,10 @@ namespace Ollama.Bootstrap.Configuration
             configuration.GetSection("OllamaSettings").Bind(ollamaSettings);
             services.AddSingleton(ollamaSettings);
 
+            var lmStudioSettings = new LMStudioSettings();
+            configuration.GetSection("LMStudioSettings").Bind(lmStudioSettings);
+            services.AddSingleton(lmStudioSettings);
+
             var agentSettings = new AgentSettings();
             configuration.GetSection("AgentSettings").Bind(agentSettings);
             services.AddSingleton(agentSettings);

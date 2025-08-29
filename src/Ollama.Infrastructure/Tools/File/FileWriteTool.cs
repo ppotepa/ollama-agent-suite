@@ -16,7 +16,56 @@ namespace Ollama.Infrastructure.Tools.File
         "File Operations")]
     [ToolUsage(
         "Create or update files with specified content",
-        SecondaryUseCases = new[] { "File creation", "Content writing", "Text output", "Configuration generation" },
+        SecondaryUseCases = new[] { 
+            "File creation", 
+            "Content writing", 
+            "Text output", 
+            "Configuration generation",
+            // Backend Development Use Cases
+            "Controller class generation",
+            "Service layer implementation", 
+            "Model/Entity definition",
+            "Repository pattern implementation",
+            "Middleware component creation",
+            "DTO/ViewModel generation",
+            "Interface definition",
+            "Extension method creation",
+            "API endpoint implementation",
+            "Authentication/authorization setup",
+            // Configuration Files
+            "appsettings.json generation",
+            "Database connection configuration",
+            "Logging configuration",
+            "CORS policy configuration", 
+            "Swagger/OpenAPI documentation",
+            "Environment-specific configs",
+            // Database Development
+            "Entity Framework model creation",
+            "Migration script generation",
+            "DbContext configuration",
+            "Seed data creation",
+            "Repository interface definition",
+            // Testing Infrastructure
+            "Unit test class generation",
+            "Integration test setup",
+            "Mock object creation",
+            "Test data generation",
+            "xUnit/NUnit test implementation",
+            // DevOps & Infrastructure
+            "Dockerfile creation",
+            "Docker Compose configuration",
+            "Kubernetes manifest generation",
+            "CI/CD pipeline configuration",
+            "GitHub Actions workflow",
+            "Azure DevOps pipeline",
+            "Deployment script creation",
+            "Health check implementation",
+            // Project Structure
+            "Package.json/csproj file generation",
+            "README and documentation files",
+            "gitignore file creation",
+            "Solution file configuration"
+        },
         RequiredParameters = new[] { "path", "content" },
         OptionalParameters = new[] { "cd", "encoding", "append", "createDirectories" },
         ExampleInvocation = "FileWrite with path=\"output.txt\" content=\"Hello World\"",
@@ -26,7 +75,10 @@ namespace Ollama.Infrastructure.Tools.File
         SafetyNotes = "All operations within session boundaries - can overwrite existing files",
         PerformanceNotes = "Large content may take time to write")]
     [ToolCapabilities(
-        ToolCapability.FileWrite | ToolCapability.FileCreate | ToolCapability.CursorNavigation,
+        ToolCapability.FileWrite | ToolCapability.FileCreate | ToolCapability.CursorNavigation | 
+        ToolCapability.BackendCodeGeneration | ToolCapability.ConfigurationGeneration | 
+        ToolCapability.DatabaseDevelopment | ToolCapability.TestingInfrastructure | 
+        ToolCapability.DevOpsDevelopment,
         FallbackStrategy = "Stream-based writing if direct file writing fails")]
     public class FileWriteTool : AbstractTool
     {

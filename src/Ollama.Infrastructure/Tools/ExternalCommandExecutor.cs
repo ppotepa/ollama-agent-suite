@@ -18,7 +18,55 @@ namespace Ollama.Infrastructure.Tools
         "System Operations")]
     [ToolUsage(
         "Execute external commands as fallback when specialized tools fail",
-        SecondaryUseCases = new[] { "Git operations", "Network downloads", "System utilities", "Legacy command support" },
+        SecondaryUseCases = new[] { 
+            "Git operations", 
+            "Network downloads", 
+            "System utilities", 
+            "Legacy command support",
+            // Backend Development Commands
+            "dotnet CLI operations (build, test, run, publish)",
+            "Package manager operations (npm, yarn, nuget)",
+            "Database operations (migrations, seeding)",
+            "Code generation tools",
+            "Scaffolding operations",
+            // DevOps & CI/CD Commands
+            "Docker operations (build, run, push, pull)",
+            "Kubernetes operations (kubectl apply, delete, get)",
+            "Infrastructure as Code (terraform, pulumi)",
+            "Cloud CLI operations (az, aws, gcloud)",
+            "Container registry operations",
+            // Build & Deployment
+            "Build automation (msbuild, gradle, maven)",
+            "Deployment scripts execution",
+            "Environment setup commands",
+            "Service management operations",
+            "Health check commands",
+            // Testing Commands
+            "Test runner execution (xunit, nunit, jest)",
+            "Code coverage tools (coverlet, nyc)",
+            "Static analysis tools (sonarqube, eslint)",
+            "Performance testing tools",
+            "Load testing execution",
+            // Database Commands
+            "Database migration tools (flyway, liquibase)",
+            "Database backup/restore operations",
+            "Data import/export tools",
+            "Schema comparison tools",
+            // Security & Monitoring
+            "Security scanning tools",
+            "Vulnerability assessment tools",
+            "Monitoring setup commands",
+            "Log aggregation tools",
+            // Version Control Operations
+            "Advanced git operations (rebase, merge, tag)",
+            "Repository management commands",
+            "Branch operations",
+            "Submodule management",
+            // Archive & Compression
+            "Archive creation/extraction (tar, zip, 7z)",
+            "File compression operations",
+            "Backup operations"
+        },
         RequiredParameters = new[] { "command" },
         OptionalParameters = new[] { "arguments", "workingDirectory", "timeout" },
         ExampleInvocation = "ExternalCommandExecutor with command=\"git clone https://github.com/user/repo\"",
@@ -28,7 +76,10 @@ namespace Ollama.Infrastructure.Tools
         SafetyNotes = "All commands execute within session boundaries - cannot escape sandbox",
         PerformanceNotes = "Performance depends on external command - use timeouts")]
     [ToolCapabilities(
-        ToolCapability.SystemCommand | ToolCapability.SystemProcess,
+        ToolCapability.SystemCommand | ToolCapability.SystemProcess | 
+        ToolCapability.DevOpsDevelopment | ToolCapability.TestingInfrastructure | 
+        ToolCapability.DatabaseDevelopment | ToolCapability.BackendDevelopment | 
+        ToolCapability.SecurityDevelopment,
         FallbackStrategy = "Built-in process execution with configurable timeouts")]
     public class ExternalCommandExecutor : AbstractTool
     {

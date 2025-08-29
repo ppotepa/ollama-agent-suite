@@ -12,7 +12,55 @@ namespace Ollama.Infrastructure.Tools
         "Code Analysis")]
     [ToolUsage(
         "Analyze code files for quality, structure, and improvement opportunities",
-        SecondaryUseCases = new[] { "Code quality assessment", "Pattern recognition", "Syntax analysis", "Complexity measurement" },
+        SecondaryUseCases = new[] { 
+            "Code quality assessment", 
+            "Pattern recognition", 
+            "Syntax analysis", 
+            "Complexity measurement",
+            // Backend Code Analysis
+            "Controller method analysis",
+            "Service layer architecture review",
+            "Repository pattern validation",
+            "Entity relationship analysis",
+            "Dependency injection assessment",
+            "API endpoint structure analysis",
+            "Authentication/authorization code review",
+            "Middleware pipeline analysis",
+            // Code Quality & Patterns
+            "SOLID principles adherence check",
+            "Design pattern identification",
+            "Code smell detection",
+            "Cyclomatic complexity measurement",
+            "Code coverage analysis",
+            "Performance bottleneck identification",
+            "Memory usage pattern analysis",
+            "Exception handling review",
+            // Database Code Analysis
+            "Entity Framework usage patterns",
+            "LINQ query optimization analysis",
+            "Database context configuration review",
+            "Migration script validation",
+            "Repository implementation analysis",
+            // Testing Code Analysis
+            "Unit test coverage assessment",
+            "Test method structure analysis",
+            "Mock usage pattern review",
+            "Integration test architecture analysis",
+            "Test data pattern analysis",
+            // Security Analysis
+            "Security vulnerability scanning",
+            "Input validation analysis",
+            "SQL injection risk assessment",
+            "Cross-site scripting (XSS) detection",
+            "Authentication mechanism review",
+            "Authorization logic analysis",
+            // Architecture Analysis
+            "Layered architecture compliance",
+            "Clean architecture pattern adherence",
+            "Microservice design analysis",
+            "Domain-driven design pattern review",
+            "CQRS implementation analysis"
+        },
         RequiredParameters = new[] { "path" },
         OptionalParameters = new[] { "cd", "includeMetrics", "analysisDepth" },
         ExampleInvocation = "CodeAnalyzer with path=\"MyProject.cs\" to analyze code structure",
@@ -22,7 +70,10 @@ namespace Ollama.Infrastructure.Tools
         SafetyNotes = "Read-only analysis within session boundaries",
         PerformanceNotes = "Analysis time depends on file size and complexity")]
     [ToolCapabilities(
-        ToolCapability.CodeAnalysis | ToolCapability.FileRead | ToolCapability.TextAnalysis,
+        ToolCapability.CodeAnalysis | ToolCapability.FileRead | ToolCapability.TextAnalysis | 
+        ToolCapability.BackendDevelopment | ToolCapability.DatabaseDevelopment | 
+        ToolCapability.TestingInfrastructure | ToolCapability.SecurityDevelopment | 
+        ToolCapability.ArchitecturalPatterns,
         FallbackStrategy = "Basic syntax analysis if advanced metrics fail")]
     public class CodeAnalyzer : AbstractTool
     {

@@ -6,6 +6,9 @@ namespace Ollama.Domain.Configuration
     {
         [Required]
         public string DefaultMode { get; set; } = "Intelligent";
+        
+        [Required]
+        public string DefaultClient { get; set; } = "ollama"; // ollama or lmstudio
     }
 
     public class OllamaSettings
@@ -45,6 +48,51 @@ namespace Ollama.Domain.Configuration
         
         [Range(100, 10000)]
         public int RetryDelay { get; set; } = 1000;
+    }
+
+    public class LMStudioSettings
+    {
+        [Required]
+        public string BaseUrl { get; set; } = "http://localhost:1234";
+        
+        [Required]
+        public string ApiEndpoint { get; set; } = "http://localhost:1234/v1";
+        
+        [Required]
+        public string ChatEndpoint { get; set; } = "http://localhost:1234/v1/chat/completions";
+        
+        [Required]
+        public string ModelsEndpoint { get; set; } = "http://localhost:1234/v1/models";
+        
+        [Required]
+        public string DefaultModel { get; set; } = "llama-3.1-8b-instruct";
+        
+        [Required]
+        public string CoderModel { get; set; } = "llama-3.1-8b-instruct";
+        
+        [Required]
+        public string ThinkerModel { get; set; } = "llama-3.1-8b-instruct";
+        
+        [Range(1, 300)]
+        public int ConnectionTimeout { get; set; } = 30;
+        
+        [Range(1, 600)]
+        public int RequestTimeout { get; set; } = 120;
+        
+        [Range(1, 10)]
+        public int MaxRetries { get; set; } = 3;
+        
+        [Range(100, 10000)]
+        public int RetryDelay { get; set; } = 1000;
+        
+        public string? ApiKey { get; set; } = null; // Optional API key for LM Studio
+        
+        public double Temperature { get; set; } = 0.1;
+        
+        public double TopP { get; set; } = 0.9;
+        
+        [Range(1, 8192)]
+        public int MaxTokens { get; set; } = 2048;
     }
 
     public class AgentSettings

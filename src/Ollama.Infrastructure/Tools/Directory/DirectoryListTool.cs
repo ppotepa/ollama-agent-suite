@@ -16,7 +16,51 @@ namespace Ollama.Infrastructure.Tools.Directory
         "Directory Operations")]
     [ToolUsage(
         "List and examine directory contents",
-        SecondaryUseCases = new[] { "File exploration", "Directory browsing", "Content inspection", "Workspace navigation" },
+        SecondaryUseCases = new[] { 
+            "File exploration", 
+            "Directory browsing", 
+            "Content inspection", 
+            "Workspace navigation",
+            // Backend Development Navigation
+            "Project structure exploration",
+            "Source code directory browsing (src/, Controllers/, Services/)",
+            "Configuration directory examination (config/, appsettings/)",
+            "Build output directory inspection (bin/, obj/, dist/)",
+            "Package directory exploration (packages/, node_modules/)",
+            "Test project navigation (tests/, UnitTests/, IntegrationTests/)",
+            // Architecture Layer Navigation
+            "Clean architecture layer browsing (Domain/, Application/, Infrastructure/)",
+            "Microservice directory exploration",
+            "API project structure inspection",
+            "Shared library directory browsing",
+            // Database Development Navigation
+            "Migration directory listing (Migrations/, Scripts/)",
+            "Entity model directory browsing (Models/, Entities/)",
+            "Database configuration inspection",
+            "Seed data directory exploration",
+            // DevOps Directory Navigation
+            "Docker configuration browsing (.docker/, containers/)",
+            "CI/CD pipeline directory inspection (.github/, .azure/)",
+            "Infrastructure code navigation (terraform/, k8s/)",
+            "Deployment script directory exploration",
+            // Testing Infrastructure Navigation
+            "Test category directory browsing (unit/, integration/, e2e/)",
+            "Test data directory inspection (TestData/, Fixtures/)",
+            "Mock directory exploration (Mocks/, Stubs/)",
+            "Performance test directory navigation",
+            // Documentation Navigation
+            "Documentation structure browsing (docs/, api-docs/)",
+            "Architecture documentation inspection",
+            "README and guide exploration",
+            // Security & Configuration Navigation
+            "Security configuration inspection (certs/, keys/)",
+            "Environment configuration browsing (environments/)",
+            "Logging configuration exploration",
+            // Build & Release Navigation
+            "Build script directory inspection (build/, scripts/)",
+            "Release artifact exploration (release/, publish/)",
+            "Package output directory browsing"
+        },
         RequiredParameters = new string[0],
         OptionalParameters = new[] { "path", "cd", "recursive", "showHidden" },
         ExampleInvocation = "DirectoryList with path=\".\" to list current directory",
@@ -26,7 +70,10 @@ namespace Ollama.Infrastructure.Tools.Directory
         SafetyNotes = "Read-only operation within session boundaries",
         PerformanceNotes = "Large directories may take time to enumerate")]
     [ToolCapabilities(
-        ToolCapability.DirectoryList | ToolCapability.CursorNavigation | ToolCapability.PathResolution,
+        ToolCapability.DirectoryList | ToolCapability.CursorNavigation | ToolCapability.PathResolution | 
+        ToolCapability.BackendDevelopment | ToolCapability.DatabaseDevelopment | 
+        ToolCapability.DevOpsDevelopment | ToolCapability.TestingInfrastructure | 
+        ToolCapability.ArchitecturalPatterns,
         FallbackStrategy = "Basic file enumeration if advanced listing fails")]
     public class DirectoryListTool : AbstractTool
     {
